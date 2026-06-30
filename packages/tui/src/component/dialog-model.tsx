@@ -8,6 +8,7 @@ import { DialogVariant } from "./dialog-variant"
 import * as fuzzysort from "fuzzysort"
 import { useConnected } from "./use-connected"
 import { useSync } from "../context/sync"
+import { HUBCLI_BRAND, getModelDisplay, compareHubcliModels } from "../hubcli/model-display"
 
 export function DialogModel(props: { providerID?: string }) {
   const local = useLocal()
@@ -70,20 +71,23 @@ export function DialogModel(props: { providerID?: string }) {
           entries(),
           filter(([_, info]) => info.status !== "deprecated"),
           filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
-          map(([model, info]) => ({
-            value: { providerID: provider.id, modelID: model },
-            title: info.name ?? model,
-            releaseDate: info.release_date,
-            description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
-              ? "(Favorite)"
-              : undefined,
-            category: connected() ? provider.name : undefined,
-            disabled: provider.id === "opencode" && model.includes("-nano"),
-            footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
-            onSelect() {
-              onSelect(provider.id, model)
-            },
-          })),
+          map(([model, info]) => {
+            const hubcli = HUBCLI_BRAND ? getModelDisplay(provider.id, model) : undefined
+            return {
+              value: { providerID: provider.id, modelID: model },
+              title: hubcli?.name ?? info.name ?? model,
+              releaseDate: info.release_date,
+              description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
+                ? "(Favorite)"
+                : undefined,
+              category: connected() ? (hubcli?.category ?? provider.name) : undefined,
+              disabled: provider.id === "opencode" && model.includes("-nano"),
+              footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
+              onSelect() {
+                onSelect(provider.id, model)
+              },
+            }
+          }),
           filter((option) => {
             if (!showSections) return true
             if (
@@ -100,7 +104,15 @@ export function DialogModel(props: { providerID?: string }) {
               return false
             return true
           }),
-          (options) => sortModelOptions(options, props.providerID !== undefined),
+          (options) =>
+            HUBCLI_BRAND
+              ? [...options].sort((a, b) =>
+                  compareHubcliModels(
+                    { providerID: a.value.providerID, modelID: a.value.modelID, title: a.title },
+                    { providerID: b.value.providerID, modelID: b.value.modelID, title: b.title },
+                  ),
+                )
+              : sortModelOptions(options, props.providerID !== undefined),
         ),
       ),
     )
@@ -117,11 +129,17 @@ export function DialogModel(props: { providerID?: string }) {
       : []
 
     if (needle) {
+      const matched = fuzzysort.go(needle, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj)
+      const sortedMatched = HUBCLI_BRAND
+        ? [...matched].sort((a, b) =>
+            compareHubcliModels(
+              { providerID: a.value.providerID, modelID: a.value.modelID, title: a.title },
+              { providerID: b.value.providerID, modelID: b.value.modelID, title: b.title },
+            ),
+          )
+        : sortModelOptions(matched, false)
       return [
-        ...sortModelOptions(
-          fuzzysort.go(needle, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj),
-          false,
-        ),
+        ...sortedMatched,
         ...fuzzysort.go(needle, popularProviders, { keys: ["title"] }).map((x) => x.obj),
       ]
     }
