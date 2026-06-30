@@ -29,7 +29,8 @@ import { DbCommand } from "./cli/cmd/db"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
-import { SCRIPT } from "./cli/brand"
+import { SCRIPT, BRAND } from "./cli/brand"
+import { DoctorCommand } from "./cli/cmd/doctor"
 
 const args = hideBin(process.argv)
 
@@ -102,7 +103,9 @@ const cli = yargs(args)
   .command(SessionCommand)
   .command(PluginCommand)
   .command(DbCommand)
-  .fail((msg, err) => {
+// DoctorCommand is HubCli-exclusive — never shown when running as opencode
+if (BRAND === "HubCli") cli.command(DoctorCommand)
+cli.fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||
       msg?.startsWith("Not enough non-option arguments") ||
