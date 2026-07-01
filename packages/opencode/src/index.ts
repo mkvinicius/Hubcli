@@ -31,6 +31,7 @@ import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
 import { SCRIPT, BRAND } from "./cli/brand"
 import { DoctorCommand } from "./cli/cmd/doctor"
+import { MaintenanceCommand } from "./cli/cmd/maintenance"
 
 const args = hideBin(process.argv)
 
@@ -103,8 +104,11 @@ const cli = yargs(args)
   .command(SessionCommand)
   .command(PluginCommand)
   .command(DbCommand)
-// DoctorCommand is HubCli-exclusive — never shown when running as opencode
-if (BRAND === "HubCli") cli.command(DoctorCommand)
+// HubCli-exclusive commands — never registered when running as opencode
+if (BRAND === "HubCli") {
+  cli.command(DoctorCommand)
+  cli.command(MaintenanceCommand)
+}
 cli.fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||
