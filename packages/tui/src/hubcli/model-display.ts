@@ -20,24 +20,31 @@ export interface HubcliModelDisplay {
 }
 
 // providerID/modelID → display info
+// Visual order: OpenAI → Kimi → DeepSeek → NVIDIA NIM → Qwen → GLM → Experimental.
+// (Qwen/GLM demoted while the Alibaba Token Plan is unavailable — AccessDenied.Unpurchased.)
 const DISPLAY_MAP: Readonly<Record<string, HubcliModelDisplay>> = {
-  "alibaba-token-plan/qwen3.7-max":  { name: "Qwen 3.7 Max",      category: "Alibaba Model Studio", sortOrder: 1 },
-  "alibaba-token-plan/qwen3.6-plus": { name: "Qwen 3.6 Plus",     category: "Alibaba Model Studio", sortOrder: 2 },
-  "alibaba-token-plan/qwen3.6-flash":{ name: "Qwen 3.6 Flash",    category: "Alibaba Model Studio", sortOrder: 3 },
-  "alibaba-token-plan/glm-5.2":      { name: "GLM-5.2",           category: "GLM",                  sortOrder: 4 },
-  "alibaba-token-plan/glm-5.1":      { name: "GLM-5.1",           category: "GLM",                  sortOrder: 5 },
-  "alibaba-token-plan/glm-5":        { name: "GLM-5",             category: "GLM",                  sortOrder: 6 },
-  "deepseek/deepseek-v4-pro":        { name: "DeepSeek V4 Pro",   category: "DeepSeek",             sortOrder: 7 },
-  "deepseek/deepseek-v4-flash":      { name: "DeepSeek V4 Flash", category: "DeepSeek",             sortOrder: 8 },
   // OpenAI models served by OpenCode Zen — validated by real calls (2026-07-02).
   // Auth: OpenCode account (auth.json). Not the official OpenAI provider.
-  "opencode/gpt-5.2":                { name: "GPT-5.2",           category: "OpenAI",               sortOrder: 9 },
-  "opencode/gpt-5.2-codex":          { name: "GPT-5.2 Codex",     category: "OpenAI",               sortOrder: 10 },
+  "opencode/gpt-5.2":                    { name: "GPT-5.2",                  category: "OpenAI",               sortOrder: 1 },
+  "opencode/gpt-5.2-codex":              { name: "GPT-5.2 Codex",            category: "OpenAI",               sortOrder: 2 },
   // Kimi (Moonshot AI) served by OpenCode Zen — validated by real calls (2026-07-02).
-  "opencode/kimi-k2.7-code":         { name: "Kimi K2.7 Code",    category: "Kimi",                 sortOrder: 11 },
-  "opencode/kimi-k2.5":              { name: "Kimi K2.5",         category: "Kimi",                 sortOrder: 12 },
+  "opencode/kimi-k2.7-code":             { name: "Kimi K2.7 Code",           category: "Kimi",                 sortOrder: 3 },
+  "opencode/kimi-k2.5":                  { name: "Kimi K2.5",                category: "Kimi",                 sortOrder: 4 },
+  "deepseek/deepseek-v4-pro":            { name: "DeepSeek V4 Pro",          category: "DeepSeek",             sortOrder: 5 },
+  "deepseek/deepseek-v4-flash":          { name: "DeepSeek V4 Flash",        category: "DeepSeek",             sortOrder: 6 },
+  // NVIDIA NIM (integrate.api.nvidia.com) — validated by real calls (2026-07-02).
+  // Names carry "— NVIDIA" so they are not confused with other providers' entries.
+  "nvidia/minimaxai/minimax-m3":         { name: "MiniMax M3 — NVIDIA",      category: "NVIDIA NIM",           sortOrder: 7 },
+  "nvidia/minimaxai/minimax-m2.7":       { name: "MiniMax M2.7 — NVIDIA",    category: "NVIDIA NIM",           sortOrder: 8 },
+  "nvidia/deepseek-ai/deepseek-v4-pro":  { name: "DeepSeek V4 Pro — NVIDIA", category: "NVIDIA NIM",           sortOrder: 9 },
+  "alibaba-token-plan/qwen3.7-max":      { name: "Qwen 3.7 Max",             category: "Alibaba Model Studio", sortOrder: 10 },
+  "alibaba-token-plan/qwen3.6-plus":     { name: "Qwen 3.6 Plus",            category: "Alibaba Model Studio", sortOrder: 11 },
+  "alibaba-token-plan/qwen3.6-flash":    { name: "Qwen 3.6 Flash",           category: "Alibaba Model Studio", sortOrder: 12 },
+  "alibaba-token-plan/glm-5.2":          { name: "GLM-5.2",                  category: "GLM",                  sortOrder: 13 },
+  "alibaba-token-plan/glm-5.1":          { name: "GLM-5.1",                  category: "GLM",                  sortOrder: 14 },
+  "alibaba-token-plan/glm-5":            { name: "GLM-5",                    category: "GLM",                  sortOrder: 15 },
   // Experimental — not part of the main validated set
-  "opencode/claude-fable-5":         { name: "Claude Fable 5",    category: "Experimental",         sortOrder: 13 },
+  "opencode/claude-fable-5":             { name: "Claude Fable 5",           category: "Experimental",         sortOrder: 16 },
 }
 
 /**

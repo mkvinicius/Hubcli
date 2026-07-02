@@ -73,6 +73,14 @@ const FABLE5_FULL = `${FABLE5_PROVIDER}/${FABLE5_MODEL_ID}`
 // OpenAI and Kimi models served by OpenCode Zen — validated by real calls
 // (2026-07-02). Auth: OpenCode account (auth.json). These are NOT the official
 // OpenAI/Moonshot providers; no OPENAI_API_KEY or MOONSHOT_API_KEY involved.
+// NVIDIA NIM — native catalog provider, validated by real calls (2026-07-02).
+// Advisory in the doctor (WARN on failure) while the integration matures.
+const NVIDIA_PROVIDER = "nvidia"
+const NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1"
+const NVIDIA_KEY_ENV = "NVIDIA_API_KEY"
+const NVIDIA_MODELS = ["minimaxai/minimax-m3", "minimaxai/minimax-m2.7", "deepseek-ai/deepseek-v4-pro"]
+const NVIDIA_CONNECT_MODEL = "minimaxai/minimax-m3"
+
 const ZEN_MODEL_GROUPS: { title: string; models: string[]; connectModel: string }[] = [
   { title: "OpenAI (via OpenCode Zen)", models: ["gpt-5.2", "gpt-5.2-codex"], connectModel: "gpt-5.2-codex" },
   { title: "Kimi (via OpenCode Zen)", models: ["kimi-k2.7-code", "kimi-k2.5"], connectModel: "kimi-k2.7-code" },
@@ -554,6 +562,22 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean }): Promise<
     }
   }
 
+  // ── NVIDIA NIM ────────────────────────────────────────────────────────────
+  // Advisory provider: key presence, endpoint and configured models. WARN only.
+  section("NVIDIA NIM")
+  line("Provider", NVIDIA_PROVIDER)
+  line("Endpoint", NVIDIA_ENDPOINT)
+  const nvidiaKeyPresent = !!process.env[NVIDIA_KEY_ENV]
+  line("API key", nvidiaKeyPresent ? `${NVIDIA_KEY_ENV} present` : `${NVIDIA_KEY_ENV} missing`)
+  addCheck("nvidia-key", nvidiaKeyPresent ? "OK" : "WARN", nvidiaKeyPresent ? "present" : `${NVIDIA_KEY_ENV} missing — add to credentials.env`)
+  {
+    const nvWhitelist = config?.provider?.[NVIDIA_PROVIDER]?.whitelist ?? []
+    line("Configured models", nvWhitelist.length ? String(nvWhitelist.length) : "none")
+    for (const m of NVIDIA_MODELS) {
+      line(`  ${NVIDIA_PROVIDER}/${m}`, nvWhitelist.includes(m) ? "configured" : "not configured")
+    }
+  }
+
   // ── Connectivity ──────────────────────────────────────────────────────────
   if (opts.connect) {
     section("Connectivity")
@@ -600,6 +624,24 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean }): Promise<
     if (!zenAnyOk) {
       addCheck("connect-opencode-zen", "FAIL", "no OpenCode Zen model reachable (gpt-5.2-codex, kimi-k2.7-code)")
       if (exitCode < 3) exitCode = 3
+    }
+
+    // NVIDIA NIM — advisory (WARN on failure). Skipped when the key is absent.
+    if (nvidiaKeyPresent) {
+      const nvFull = `${NVIDIA_PROVIDER}/${NVIDIA_CONNECT_MODEL}`
+      process.stdout.write(`  Testing ${nvFull}...`)
+      const nr = testZenConnection(nvFull)
+      const nt = `${(nr.ms / 1000).toFixed(1)}s`
+      if (nr.ok) {
+        process.stdout.write(`\r  ${"NVIDIA NIM".padEnd(26)} OK (${nt})\n`)
+        addCheck(`connect-${nvFull}`, "OK", `${nr.ms}ms`)
+      } else {
+        const kind = nr.timedOut ? "TIMEOUT" : "UNAVAILABLE"
+        process.stdout.write(`\r  ${"NVIDIA NIM".padEnd(26)} ${kind} (${nt}) — ${sanitizeError(nr.error ?? "unknown").slice(0, 120)}\n`)
+        addCheck(`connect-${nvFull}`, "WARN", `nvidia model unavailable: ${sanitizeError(nr.error ?? "unknown").slice(0, 120)}`)
+      }
+    } else {
+      line("NVIDIA NIM", `skipped (${NVIDIA_KEY_ENV} missing)`)
     }
 
     for (const [providerID, provCfg] of Object.entries(PROVIDER_ENDPOINTS)) {

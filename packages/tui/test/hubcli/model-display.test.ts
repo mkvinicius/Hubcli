@@ -12,25 +12,25 @@ describe("getModelDisplay", () => {
     expect(d).toBeDefined()
     expect(d!.name).toBe("Qwen 3.7 Max")
     expect(d!.category).toBe("Alibaba Model Studio")
-    expect(d!.sortOrder).toBe(1)
+    expect(d!.sortOrder).toBe(10)
   })
 
   test("returns display info for GLM models", () => {
     expect(getModelDisplay("alibaba-token-plan", "glm-5.2")!.name).toBe("GLM-5.2")
     expect(getModelDisplay("alibaba-token-plan", "glm-5.2")!.category).toBe("GLM")
-    expect(getModelDisplay("alibaba-token-plan", "glm-5.1")!.sortOrder).toBe(5)
-    expect(getModelDisplay("alibaba-token-plan", "glm-5")!.sortOrder).toBe(6)
+    expect(getModelDisplay("alibaba-token-plan", "glm-5.1")!.sortOrder).toBe(14)
+    expect(getModelDisplay("alibaba-token-plan", "glm-5")!.sortOrder).toBe(15)
   })
 
   test("returns display info for DeepSeek models", () => {
     const pro = getModelDisplay("deepseek", "deepseek-v4-pro")!
     expect(pro.name).toBe("DeepSeek V4 Pro")
     expect(pro.category).toBe("DeepSeek")
-    expect(pro.sortOrder).toBe(7)
+    expect(pro.sortOrder).toBe(5)
 
     const flash = getModelDisplay("deepseek", "deepseek-v4-flash")!
     expect(flash.name).toBe("DeepSeek V4 Flash")
-    expect(flash.sortOrder).toBe(8)
+    expect(flash.sortOrder).toBe(6)
   })
 
   test("returns undefined for unknown model — does not hide it", () => {
@@ -49,7 +49,7 @@ describe("compareHubcliModels", () => {
     return { providerID, modelID, title }
   }
 
-  test("sorts the eight validated models in canonical order", () => {
+  test("sorts the legacy eight models in canonical group order (DeepSeek now before Qwen/GLM)", () => {
     const models = [
       entry("deepseek", "deepseek-v4-flash", "DeepSeek V4 Flash"),
       entry("alibaba-token-plan", "glm-5", "GLM-5"),
@@ -63,14 +63,14 @@ describe("compareHubcliModels", () => {
     const sorted = [...models].sort(compareHubcliModels)
     const ids = sorted.map((m) => m.modelID)
     expect(ids).toEqual([
+      "deepseek-v4-pro",
+      "deepseek-v4-flash",
       "qwen3.7-max",
       "qwen3.6-plus",
       "qwen3.6-flash",
       "glm-5.2",
       "glm-5.1",
       "glm-5",
-      "deepseek-v4-pro",
-      "deepseek-v4-flash",
     ])
   })
 
@@ -89,8 +89,8 @@ describe("compareHubcliModels", () => {
 })
 
 describe("HUBCLI_MODEL_KEYS", () => {
-  test("contains exactly the thirteen validated model keys", () => {
-    expect(HUBCLI_MODEL_KEYS.size).toBe(13)
+  test("contains exactly the sixteen validated model keys", () => {
+    expect(HUBCLI_MODEL_KEYS.size).toBe(16)
     expect(HUBCLI_MODEL_KEYS.has("alibaba-token-plan/qwen3.7-max")).toBe(true)
     expect(HUBCLI_MODEL_KEYS.has("deepseek/deepseek-v4-flash")).toBe(true)
     // OpenAI/Kimi are served via OpenCode Zen, never via the official providers
@@ -99,19 +99,23 @@ describe("HUBCLI_MODEL_KEYS", () => {
     expect(HUBCLI_MODEL_KEYS.has("opencode/kimi-k2.7-code")).toBe(true)
     expect(HUBCLI_MODEL_KEYS.has("opencode/kimi-k2.5")).toBe(true)
     expect(HUBCLI_MODEL_KEYS.has("opencode/claude-fable-5")).toBe(true)
+    // NVIDIA NIM models — validated 2026-07-02
+    expect(HUBCLI_MODEL_KEYS.has("nvidia/minimaxai/minimax-m3")).toBe(true)
+    expect(HUBCLI_MODEL_KEYS.has("nvidia/minimaxai/minimax-m2.7")).toBe(true)
+    expect(HUBCLI_MODEL_KEYS.has("nvidia/deepseek-ai/deepseek-v4-pro")).toBe(true)
     expect(HUBCLI_MODEL_KEYS.has("openai/gpt-4o")).toBe(false)
   })
 })
 
 describe("new Zen model groups", () => {
   test("OpenAI group has friendly names and category OpenAI", () => {
-    expect(getModelDisplay("opencode", "gpt-5.2")).toEqual({ name: "GPT-5.2", category: "OpenAI", sortOrder: 9 })
-    expect(getModelDisplay("opencode", "gpt-5.2-codex")).toEqual({ name: "GPT-5.2 Codex", category: "OpenAI", sortOrder: 10 })
+    expect(getModelDisplay("opencode", "gpt-5.2")).toEqual({ name: "GPT-5.2", category: "OpenAI", sortOrder: 1 })
+    expect(getModelDisplay("opencode", "gpt-5.2-codex")).toEqual({ name: "GPT-5.2 Codex", category: "OpenAI", sortOrder: 2 })
   })
 
   test("Kimi group has friendly names and category Kimi", () => {
-    expect(getModelDisplay("opencode", "kimi-k2.7-code")).toEqual({ name: "Kimi K2.7 Code", category: "Kimi", sortOrder: 11 })
-    expect(getModelDisplay("opencode", "kimi-k2.5")).toEqual({ name: "Kimi K2.5", category: "Kimi", sortOrder: 12 })
+    expect(getModelDisplay("opencode", "kimi-k2.7-code")).toEqual({ name: "Kimi K2.7 Code", category: "Kimi", sortOrder: 3 })
+    expect(getModelDisplay("opencode", "kimi-k2.5")).toEqual({ name: "Kimi K2.5", category: "Kimi", sortOrder: 4 })
   })
 
   test("Fable 5 sits in Experimental, after all main groups", () => {
@@ -120,17 +124,20 @@ describe("new Zen model groups", () => {
     const maxMain = Math.max(
       getModelDisplay("opencode", "kimi-k2.5")!.sortOrder,
       getModelDisplay("deepseek", "deepseek-v4-pro")!.sortOrder,
+      getModelDisplay("nvidia", "minimaxai/minimax-m3")!.sortOrder,
+      getModelDisplay("alibaba-token-plan", "glm-5")!.sortOrder,
     )
     expect(fable.sortOrder).toBeGreaterThan(maxMain)
   })
 
-  test("ordering: Qwen < GLM < DeepSeek < OpenAI < Kimi < Experimental", () => {
+  test("ordering: OpenAI < Kimi < DeepSeek < NVIDIA < Qwen < GLM < Experimental", () => {
     const order = [
-      getModelDisplay("alibaba-token-plan", "qwen3.7-max")!.sortOrder,
-      getModelDisplay("alibaba-token-plan", "glm-5.2")!.sortOrder,
-      getModelDisplay("deepseek", "deepseek-v4-pro")!.sortOrder,
       getModelDisplay("opencode", "gpt-5.2")!.sortOrder,
       getModelDisplay("opencode", "kimi-k2.7-code")!.sortOrder,
+      getModelDisplay("deepseek", "deepseek-v4-pro")!.sortOrder,
+      getModelDisplay("nvidia", "minimaxai/minimax-m3")!.sortOrder,
+      getModelDisplay("alibaba-token-plan", "qwen3.7-max")!.sortOrder,
+      getModelDisplay("alibaba-token-plan", "glm-5.2")!.sortOrder,
       getModelDisplay("opencode", "claude-fable-5")!.sortOrder,
     ]
     for (let i = 1; i < order.length; i++) expect(order[i]).toBeGreaterThan(order[i - 1])
@@ -156,5 +163,26 @@ describe("category grouping", () => {
     const qwenCat = getModelDisplay("alibaba-token-plan", "qwen3.7-max")!.category
     const glmCat = getModelDisplay("alibaba-token-plan", "glm-5.2")!.category
     expect(qwenCat).not.toBe(glmCat)
+  })
+})
+
+describe("NVIDIA NIM group", () => {
+  test("names carry the — NVIDIA suffix to avoid provider confusion", () => {
+    expect(getModelDisplay("nvidia", "minimaxai/minimax-m3")!.name).toBe("MiniMax M3 — NVIDIA")
+    expect(getModelDisplay("nvidia", "minimaxai/minimax-m2.7")!.name).toBe("MiniMax M2.7 — NVIDIA")
+    expect(getModelDisplay("nvidia", "deepseek-ai/deepseek-v4-pro")!.name).toBe("DeepSeek V4 Pro — NVIDIA")
+  })
+
+  test("all NVIDIA models share category NVIDIA NIM", () => {
+    for (const id of ["minimaxai/minimax-m3", "minimaxai/minimax-m2.7", "deepseek-ai/deepseek-v4-pro"]) {
+      expect(getModelDisplay("nvidia", id)!.category).toBe("NVIDIA NIM")
+    }
+  })
+
+  test("NVIDIA DeepSeek entry is distinct from the direct DeepSeek provider entry", () => {
+    const direct = getModelDisplay("deepseek", "deepseek-v4-pro")!
+    const viaNvidia = getModelDisplay("nvidia", "deepseek-ai/deepseek-v4-pro")!
+    expect(direct.name).not.toBe(viaNvidia.name)
+    expect(direct.category).not.toBe(viaNvidia.category)
   })
 })

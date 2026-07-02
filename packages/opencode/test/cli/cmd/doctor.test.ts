@@ -741,3 +741,59 @@ describe("doctor command — Fable 5 experimental section", () => {
     DOCTOR_TIMEOUT,
   )
 })
+
+// ---------------------------------------------------------------------------
+// 5. NVIDIA NIM — subprocess integration (fake keys only)
+// ---------------------------------------------------------------------------
+
+describe("doctor command — NVIDIA NIM section", () => {
+  test(
+    "key present is reported without exposing the value",
+    async () => {
+      const { env } = buildFixture({ env: { NVIDIA_API_KEY: "nvapi-fake-value-never-print" } })
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("NVIDIA NIM")
+      expect(result.stdout).toContain("NVIDIA_API_KEY present")
+      expect(result.stdout).toContain("https://integrate.api.nvidia.com/v1")
+      expect(result.stdout).not.toContain("nvapi-fake-value-never-print")
+      expect(result.exitCode).toBe(0)
+    },
+    DOCTOR_TIMEOUT,
+  )
+
+  test(
+    "key missing is a WARN, never a failure",
+    async () => {
+      const { env } = buildFixture()
+      delete env["NVIDIA_API_KEY"]
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("NVIDIA_API_KEY missing")
+      expect(result.exitCode).toBe(0)
+    },
+    DOCTOR_TIMEOUT,
+  )
+
+  test(
+    "--connect skips NVIDIA when key is missing",
+    async () => {
+      const { env } = buildFixture({
+        env: { DASHSCOPE_API_KEY: "fake", DEEPSEEK_API_KEY: "fake" },
+      })
+      delete env["NVIDIA_API_KEY"]
+      const result = await spawnDoctor(["--connect"], env)
+      expect(result.stdout).toContain("skipped (NVIDIA_API_KEY missing)")
+    },
+    60_000,
+  )
+
+  test(
+    "nvidia model not in fixture config shows as not configured",
+    async () => {
+      const { env } = buildFixture({ env: { NVIDIA_API_KEY: "nvapi-fake" } })
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("not configured")
+      expect(result.exitCode).toBe(0)
+    },
+    DOCTOR_TIMEOUT,
+  )
+})
