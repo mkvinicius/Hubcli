@@ -361,13 +361,63 @@ describe("doctor command — exit code 3 (connectivity failure)", () => {
         },
       })
       const result = await spawnDoctor(["--connect"], env)
+      // DeepSeek is REQUIRED → invalid key must produce exit 3.
       expect(result.exitCode).toBe(3)
       // Error output must NOT include the fake key value
       expect(result.stdout).not.toContain("invalid-key-for-testing-only")
       expect(result.stderr).not.toContain("invalid-key-for-testing-only")
       expect(result.stdout).toContain("FAILED")
+      // Alibaba is DEGRADED → invalid key is UNAVAILABLE/WARN, not FAILED,
+      // with the entitlement guidance and no raw API body echoed.
+      expect(result.stdout).toContain("UNAVAILABLE")
+      expect(result.stdout).toContain("verify Token Plan subscription")
+      expect(result.stdout).not.toContain("connect-alibaba-token-plan: HTTP")
     },
     60_000, // connectivity test can take up to 30s per provider
+  )
+
+  test(
+    "Zen group is required: all Zen models failing → exit 3",
+    async () => {
+      const { home, env } = buildFixture({
+        env: { DASHSCOPE_API_KEY: "fake", DEEPSEEK_API_KEY: "fake" },
+      })
+      // Make the fixture launcher fail every `hubcli run` call, so Fable,
+      // gpt-5.2-codex and kimi-k2.7-code all come back unreachable.
+      const launcher = path.join(home, ".local", "bin", "hubcli")
+      fs.writeFileSync(launcher, "#!/bin/sh\nexit 1\n", "utf8")
+      fs.chmodSync(launcher, 0o755)
+      const result = await spawnDoctor(["--connect"], env)
+      expect(result.exitCode).toBe(3)
+      expect(result.stdout).toContain("no OpenCode Zen model reachable")
+    },
+    60_000,
+  )
+})
+
+describe("doctor command — default model comes from config, not code", () => {
+  test(
+    "shows the model set in opencode.json (fixture default)",
+    async () => {
+      const { env } = buildFixture()
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("alibaba-token-plan/qwen3.7-max")
+    },
+    DOCTOR_TIMEOUT,
+  )
+
+  test(
+    "shows a different default when the config changes",
+    async () => {
+      const { home, env } = buildFixture()
+      const cfgPath = path.join(home, ".hubcli", "opencode.json")
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"))
+      cfg.model = "opencode/gpt-5.2-codex"
+      fs.writeFileSync(cfgPath, JSON.stringify(cfg), "utf8")
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("opencode/gpt-5.2-codex")
+    },
+    DOCTOR_TIMEOUT,
   )
 })
 

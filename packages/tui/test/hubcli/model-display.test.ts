@@ -89,11 +89,51 @@ describe("compareHubcliModels", () => {
 })
 
 describe("HUBCLI_MODEL_KEYS", () => {
-  test("contains exactly eight known model keys", () => {
-    expect(HUBCLI_MODEL_KEYS.size).toBe(8)
+  test("contains exactly the thirteen validated model keys", () => {
+    expect(HUBCLI_MODEL_KEYS.size).toBe(13)
     expect(HUBCLI_MODEL_KEYS.has("alibaba-token-plan/qwen3.7-max")).toBe(true)
     expect(HUBCLI_MODEL_KEYS.has("deepseek/deepseek-v4-flash")).toBe(true)
+    // OpenAI/Kimi are served via OpenCode Zen, never via the official providers
+    expect(HUBCLI_MODEL_KEYS.has("opencode/gpt-5.2")).toBe(true)
+    expect(HUBCLI_MODEL_KEYS.has("opencode/gpt-5.2-codex")).toBe(true)
+    expect(HUBCLI_MODEL_KEYS.has("opencode/kimi-k2.7-code")).toBe(true)
+    expect(HUBCLI_MODEL_KEYS.has("opencode/kimi-k2.5")).toBe(true)
+    expect(HUBCLI_MODEL_KEYS.has("opencode/claude-fable-5")).toBe(true)
     expect(HUBCLI_MODEL_KEYS.has("openai/gpt-4o")).toBe(false)
+  })
+})
+
+describe("new Zen model groups", () => {
+  test("OpenAI group has friendly names and category OpenAI", () => {
+    expect(getModelDisplay("opencode", "gpt-5.2")).toEqual({ name: "GPT-5.2", category: "OpenAI", sortOrder: 9 })
+    expect(getModelDisplay("opencode", "gpt-5.2-codex")).toEqual({ name: "GPT-5.2 Codex", category: "OpenAI", sortOrder: 10 })
+  })
+
+  test("Kimi group has friendly names and category Kimi", () => {
+    expect(getModelDisplay("opencode", "kimi-k2.7-code")).toEqual({ name: "Kimi K2.7 Code", category: "Kimi", sortOrder: 11 })
+    expect(getModelDisplay("opencode", "kimi-k2.5")).toEqual({ name: "Kimi K2.5", category: "Kimi", sortOrder: 12 })
+  })
+
+  test("Fable 5 sits in Experimental, after all main groups", () => {
+    const fable = getModelDisplay("opencode", "claude-fable-5")!
+    expect(fable.category).toBe("Experimental")
+    const maxMain = Math.max(
+      getModelDisplay("opencode", "kimi-k2.5")!.sortOrder,
+      getModelDisplay("deepseek", "deepseek-v4-pro")!.sortOrder,
+    )
+    expect(fable.sortOrder).toBeGreaterThan(maxMain)
+  })
+
+  test("ordering: Qwen < GLM < DeepSeek < OpenAI < Kimi < Experimental", () => {
+    const order = [
+      getModelDisplay("alibaba-token-plan", "qwen3.7-max")!.sortOrder,
+      getModelDisplay("alibaba-token-plan", "glm-5.2")!.sortOrder,
+      getModelDisplay("deepseek", "deepseek-v4-pro")!.sortOrder,
+      getModelDisplay("opencode", "gpt-5.2")!.sortOrder,
+      getModelDisplay("opencode", "kimi-k2.7-code")!.sortOrder,
+      getModelDisplay("opencode", "claude-fable-5")!.sortOrder,
+    ]
+    for (let i = 1; i < order.length; i++) expect(order[i]).toBeGreaterThan(order[i - 1])
   })
 })
 

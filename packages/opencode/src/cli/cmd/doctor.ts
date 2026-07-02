@@ -69,6 +69,14 @@ const CREDENTIAL_VARS = ["DASHSCOPE_API_KEY", "DEEPSEEK_API_KEY"]
 const FABLE5_PROVIDER = "opencode"
 const FABLE5_MODEL_ID = "claude-fable-5"
 const FABLE5_FULL = `${FABLE5_PROVIDER}/${FABLE5_MODEL_ID}`
+
+// OpenAI and Kimi models served by OpenCode Zen — validated by real calls
+// (2026-07-02). Auth: OpenCode account (auth.json). These are NOT the official
+// OpenAI/Moonshot providers; no OPENAI_API_KEY or MOONSHOT_API_KEY involved.
+const ZEN_MODEL_GROUPS: { title: string; models: string[]; connectModel: string }[] = [
+  { title: "OpenAI (via OpenCode Zen)", models: ["gpt-5.2", "gpt-5.2-codex"], connectModel: "gpt-5.2-codex" },
+  { title: "Kimi (via OpenCode Zen)", models: ["kimi-k2.7-code", "kimi-k2.5"], connectModel: "kimi-k2.7-code" },
+]
 // models.dev cache written by OpenCode itself — source of truth for metadata
 const MODELS_CACHE = path.join(HOME, ".cache", "opencode", "models.json")
 
@@ -234,7 +242,7 @@ export interface FableCatalogInfo {
   costOutput: string
 }
 
-export function readFableCatalog(cachePath: string = MODELS_CACHE): FableCatalogInfo {
+export function readZenCatalog(modelID: string, cachePath: string = MODELS_CACHE): FableCatalogInfo {
   const unknown: FableCatalogInfo = {
     found: false,
     status: "unknown",
@@ -246,7 +254,7 @@ export function readFableCatalog(cachePath: string = MODELS_CACHE): FableCatalog
   try {
     const raw = fs.readFileSync(cachePath, "utf8")
     const data = JSON.parse(raw) as Record<string, { models?: Record<string, any> }>
-    const model = data?.[FABLE5_PROVIDER]?.models?.[FABLE5_MODEL_ID]
+    const model = data?.[FABLE5_PROVIDER]?.models?.[modelID]
     if (!model) return unknown
     return {
       found: true,
@@ -259,6 +267,10 @@ export function readFableCatalog(cachePath: string = MODELS_CACHE): FableCatalog
   } catch {
     return unknown
   }
+}
+
+export function readFableCatalog(cachePath: string = MODELS_CACHE): FableCatalogInfo {
+  return readZenCatalog(FABLE5_MODEL_ID, cachePath)
 }
 
 // ---------------------------------------------------------------------------
@@ -279,13 +291,14 @@ export interface ConnectResult {
 const FABLE_CONNECT_TIMEOUT_MS = 60_000
 const FABLE_OUTPUT_LIMIT = 64 * 1024 // cap stdout/stderr capture
 
-export function testFableConnection(
+export function testZenConnection(
+  modelFull: string,
   launcher: string = HUBCLI_LAUNCHER,
   timeoutMs: number = FABLE_CONNECT_TIMEOUT_MS,
 ): ConnectResult {
   const start = Date.now()
   // No shell, args as array, cwd inherited, no credentials in argv.
-  const result = spawnSync(launcher, ["run", "--model", FABLE5_FULL, "Responda somente: OK"], {
+  const result = spawnSync(launcher, ["run", "--model", modelFull, "Responda somente: OK"], {
     encoding: "utf8",
     timeout: timeoutMs,
     maxBuffer: FABLE_OUTPUT_LIMIT,
@@ -305,6 +318,13 @@ export function testFableConnection(
   }
   const errText = sanitizeError(((result.stderr ?? "") + (result.stdout ?? "")).slice(0, FABLE_OUTPUT_LIMIT).trim()).slice(0, 200)
   return { ok: false, ms, error: errText || `exit ${result.status ?? "?"}` }
+}
+
+export function testFableConnection(
+  launcher: string = HUBCLI_LAUNCHER,
+  timeoutMs: number = FABLE_CONNECT_TIMEOUT_MS,
+): ConnectResult {
+  return testZenConnection(FABLE5_FULL, launcher, timeoutMs)
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +535,25 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean }): Promise<
     line("Cost output", fableCatalog.costOutput)
   }
 
+  // ── OpenAI / Kimi via OpenCode Zen ────────────────────────────────────────
+  // Same OpenCode account auth as Fable. Advisory checks (WARN at worst).
+  for (const group of ZEN_MODEL_GROUPS) {
+    section(group.title)
+    line("Provider", `OpenCode Zen (${FABLE5_PROVIDER})`)
+    line("Authentication", authLabels[fableAuth.state])
+    for (const m of group.models) {
+      const info = readZenCatalog(m)
+      line(`  ${FABLE5_PROVIDER}/${m}`, info.found ? info.status : "not in catalog")
+      if (!info.found) {
+        addCheck(`zen-${m}`, "WARN", `${m} absent from models.json cache`)
+      }
+      if (opts.verbose && info.found) {
+        line("    Context", info.context)
+        line("    Cost in/out", `${info.costInput} / ${info.costOutput}`)
+      }
+    }
+  }
+
   // ── Connectivity ──────────────────────────────────────────────────────────
   if (opts.connect) {
     section("Connectivity")
@@ -538,14 +577,50 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean }): Promise<
       line("  Response", fableResult.response)
     }
 
+    // OpenAI + Kimi via OpenCode Zen — REQUIRED as a group: the Zen
+    // connection is considered functional if at least one model responds.
+    // Individual model failures are WARN; all failing → FAIL (exit 3).
+    let zenAnyOk = false
+    for (const group of ZEN_MODEL_GROUPS) {
+      const full = `${FABLE5_PROVIDER}/${group.connectModel}`
+      const label = `${group.connectModel} (zen)`
+      process.stdout.write(`  Testing ${full}...`)
+      const zr = testZenConnection(full)
+      const zt = `${(zr.ms / 1000).toFixed(1)}s`
+      if (zr.ok) {
+        zenAnyOk = true
+        process.stdout.write(`\r  ${label.padEnd(26)} OK (${zt})\n`)
+        addCheck(`connect-${full}`, "OK", `${zr.ms}ms`)
+      } else {
+        const kind = zr.timedOut ? "TIMEOUT" : "UNAVAILABLE"
+        process.stdout.write(`\r  ${label.padEnd(26)} ${kind} (${zt}) — ${sanitizeError(zr.error ?? "unknown")}\n`)
+        addCheck(`connect-${full}`, "WARN", `zen model unavailable: ${zr.error ?? "unknown"}`)
+      }
+    }
+    if (!zenAnyOk) {
+      addCheck("connect-opencode-zen", "FAIL", "no OpenCode Zen model reachable (gpt-5.2-codex, kimi-k2.7-code)")
+      if (exitCode < 3) exitCode = 3
+    }
+
     for (const [providerID, provCfg] of Object.entries(PROVIDER_ENDPOINTS)) {
-      const label = providerID === "alibaba-token-plan" ? "Alibaba Token Plan" : "DeepSeek"
+      const isAlibaba = providerID === "alibaba-token-plan"
+      const label = isAlibaba ? "Alibaba Token Plan" : "DeepSeek"
       process.stdout.write(`  Testing ${label}...`)
       const result = await testConnection(providerID)
       const timing = `${(result.ms / 1000).toFixed(1)}s`
       if (result.ok) {
         process.stdout.write(`\r  ${label.padEnd(26)} OK (${timing})\n`)
         addCheck(`connect-${providerID}`, "OK", `${result.ms}ms`)
+      } else if (isAlibaba) {
+        // Alibaba is DEGRADED, not required, while the Token Plan is not
+        // regularized. Never fails the doctor; the reason is summarized
+        // without echoing the raw API response body.
+        const entitlement = (result.error ?? "").includes("Unpurchased") || result.httpStatus === 403
+        process.stdout.write(`\r  ${label.padEnd(26)} UNAVAILABLE (${timing})\n`)
+        line("  Status", "unavailable")
+        line("  Reason", entitlement ? "plan or model entitlement" : sanitizeError(result.error ?? "unknown").slice(0, 120))
+        line("  Action", "verify Token Plan subscription")
+        addCheck(`connect-${providerID}`, "WARN", entitlement ? "plan or model entitlement — verify Token Plan subscription" : `unavailable: ${sanitizeError(result.error ?? "unknown").slice(0, 120)}`)
       } else {
         const errMsg = result.error ?? `HTTP ${result.httpStatus}`
         process.stdout.write(`\r  ${label.padEnd(26)} FAILED (${timing}) — ${sanitizeError(errMsg)}\n`)
