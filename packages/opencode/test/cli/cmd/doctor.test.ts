@@ -21,7 +21,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import fs from "fs"
 import os from "os"
 import path from "path"
-import { sanitizeError } from "../../../src/cli/cmd/doctor"
+import { sanitizeError, checkOpenCodeAuth, readFableCatalog, testFableConnection } from "../../../src/cli/cmd/doctor"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -86,7 +86,20 @@ interface FixtureOpts {
   credsPerms?: number
   /** Extra env vars to merge in (e.g. API key mocks). */
   env?: Record<string, string>
+  /**
+   * OpenCode auth.json content (fake values only):
+   *   "valid"   — opencode entry present
+   *   "absent"  — file exists but no opencode entry
+   *   "invalid" — malformed JSON
+   *   undefined — file not created
+   */
+  authJson?: "valid" | "absent" | "invalid"
+  /** Create ~/.cache/opencode/models.json with claude-fable-5? Default: not created. */
+  fableInCatalog?: boolean
 }
+
+// Fake token — must never appear in doctor output
+const FAKE_OPENCODE_TOKEN = "fake-opencode-token-never-print-me"
 
 let fixtureRoots: string[] = []
 
@@ -136,6 +149,45 @@ function buildFixture(opts: FixtureOpts = {}): { home: string; env: Record<strin
     const credsPath = path.join(hubcliDir, "credentials.env")
     fs.writeFileSync(credsPath, "# test fixture\n", "utf8")
     fs.chmodSync(credsPath, opts.credsPerms ?? 0o600)
+  }
+
+  // OpenCode auth.json fixture (fake values only — never the real file)
+  if (opts.authJson) {
+    const authDir = path.join(home, ".local", "share", "opencode")
+    fs.mkdirSync(authDir, { recursive: true })
+    const authPath = path.join(authDir, "auth.json")
+    if (opts.authJson === "valid") {
+      fs.writeFileSync(authPath, JSON.stringify({ opencode: { type: "api", key: FAKE_OPENCODE_TOKEN } }), "utf8")
+    } else if (opts.authJson === "absent") {
+      fs.writeFileSync(authPath, JSON.stringify({ "other-provider": { type: "api", key: FAKE_OPENCODE_TOKEN } }), "utf8")
+    } else {
+      fs.writeFileSync(authPath, "{ not valid json !!", "utf8")
+    }
+    fs.chmodSync(authPath, 0o600)
+  }
+
+  // models.json cache fixture
+  if (opts.fableInCatalog) {
+    const cacheDir = path.join(home, ".cache", "opencode")
+    fs.mkdirSync(cacheDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(cacheDir, "models.json"),
+      JSON.stringify({
+        opencode: {
+          id: "opencode",
+          models: {
+            "claude-fable-5": {
+              id: "claude-fable-5",
+              name: "Claude Fable 5",
+              status: "deprecated",
+              limit: { context: 1000000, output: 128000 },
+              cost: { input: 10, output: 50 },
+            },
+          },
+        },
+      }),
+      "utf8",
+    )
   }
 
   const env = minimalEnv({
@@ -408,6 +460,233 @@ describe("doctor command — HUBCLI_BRAND guard", () => {
         new Response(proc.stderr).text(),
       ])
       expect(helpOutput).toContain("doctor")
+    },
+    DOCTOR_TIMEOUT,
+  )
+})
+
+// ---------------------------------------------------------------------------
+// 3. Claude Fable 5 (experimental) — unit tests
+// ---------------------------------------------------------------------------
+
+describe("checkOpenCodeAuth (unit, fixture paths only)", () => {
+  function tmpAuth(content: string | null, perms = 0o600): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hubcli-auth-test-"))
+    fixtureRoots.push(dir)
+    const p = path.join(dir, "auth.json")
+    if (content !== null) {
+      fs.writeFileSync(p, content, "utf8")
+      fs.chmodSync(p, perms)
+    }
+    return p
+  }
+
+  test("missing file → missing-file", () => {
+    const p = tmpAuth(null)
+    expect(checkOpenCodeAuth(p).state).toBe("missing-file")
+  })
+
+  test("invalid JSON → invalid-json (no crash)", () => {
+    const p = tmpAuth("{ broken !!")
+    expect(checkOpenCodeAuth(p).state).toBe("invalid-json")
+  })
+
+  test("opencode entry absent → provider-absent", () => {
+    const p = tmpAuth(JSON.stringify({ other: { type: "api", key: "fake" } }))
+    expect(checkOpenCodeAuth(p).state).toBe("provider-absent")
+  })
+
+  test("opencode entry present → present, perms reported, token never returned", () => {
+    const p = tmpAuth(JSON.stringify({ opencode: { type: "api", key: "fake-token-value" } }))
+    const result = checkOpenCodeAuth(p)
+    expect(result.state).toBe("present")
+    expect(result.perms).toBe("600")
+    // the result object must not carry any token material
+    expect(JSON.stringify(result)).not.toContain("fake-token-value")
+  })
+})
+
+describe("readFableCatalog (unit, fixture paths only)", () => {
+  function tmpCatalog(content: string | null): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hubcli-catalog-test-"))
+    fixtureRoots.push(dir)
+    const p = path.join(dir, "models.json")
+    if (content !== null) fs.writeFileSync(p, content, "utf8")
+    return p
+  }
+
+  test("fable present with deprecated status", () => {
+    const p = tmpCatalog(
+      JSON.stringify({
+        opencode: {
+          models: {
+            "claude-fable-5": {
+              status: "deprecated",
+              limit: { context: 1000000, output: 128000 },
+              cost: { input: 10, output: 50 },
+            },
+          },
+        },
+      }),
+    )
+    const info = readFableCatalog(p)
+    expect(info.found).toBe(true)
+    expect(info.status).toBe("deprecated")
+    expect(info.context).toBe("1000000")
+    expect(info.costInput).toBe("$10/M")
+  })
+
+  test("fable removed from catalog → found false, all unknown", () => {
+    const p = tmpCatalog(JSON.stringify({ opencode: { models: {} } }))
+    const info = readFableCatalog(p)
+    expect(info.found).toBe(false)
+    expect(info.status).toBe("unknown")
+    expect(info.context).toBe("unknown")
+  })
+
+  test("cache file missing → found false, no crash", () => {
+    const info = readFableCatalog("/nonexistent/models.json")
+    expect(info.found).toBe(false)
+  })
+
+  test("metadata fields absent → unknown, not invented", () => {
+    const p = tmpCatalog(JSON.stringify({ opencode: { models: { "claude-fable-5": {} } } }))
+    const info = readFableCatalog(p)
+    expect(info.found).toBe(true)
+    expect(info.context).toBe("unknown")
+    expect(info.costInput).toBe("unknown")
+  })
+})
+
+describe("testFableConnection (unit, stub launchers — no real API)", () => {
+  function stubLauncher(script: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hubcli-launcher-test-"))
+    fixtureRoots.push(dir)
+    const p = path.join(dir, "hubcli")
+    fs.writeFileSync(p, "#!/bin/sh\n" + script + "\n", "utf8")
+    fs.chmodSync(p, 0o755)
+    return p
+  }
+
+  test("exit 0 with OK → ok true", () => {
+    const launcher = stubLauncher('echo "OK"')
+    const result = testFableConnection(launcher, 5_000)
+    expect(result.ok).toBe(true)
+    expect(result.response).toBe("OK")
+  })
+
+  test("timeout is distinguished from normal failure", () => {
+    const launcher = stubLauncher("sleep 10")
+    const result = testFableConnection(launcher, 500)
+    expect(result.ok).toBe(false)
+    expect(result.timedOut).toBe(true)
+    expect(result.error).toContain("timeout")
+  })
+
+  test("stderr with sk- key is sanitized", () => {
+    const launcher = stubLauncher('echo "error with key sk-SECRETKEY12345" >&2; exit 1')
+    const result = testFableConnection(launcher, 5_000)
+    expect(result.ok).toBe(false)
+    expect(result.timedOut).not.toBe(true)
+    expect(result.error).not.toContain("sk-SECRETKEY12345")
+    expect(result.error).toContain("sk-••••")
+  })
+
+  test("nonzero exit without output → exit code reported", () => {
+    const launcher = stubLauncher("exit 7")
+    const result = testFableConnection(launcher, 5_000)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain("exit 7")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4. Claude Fable 5 (experimental) — subprocess integration
+// ---------------------------------------------------------------------------
+
+describe("doctor command — Fable 5 experimental section", () => {
+  test(
+    "labels Fable as experimental with deprecated catalog status",
+    async () => {
+      const { env } = buildFixture({ authJson: "valid", fableInCatalog: true })
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("Claude Fable 5 (experimental)")
+      expect(result.stdout).toContain("OpenCode Zen (opencode)")
+      expect(result.stdout).toContain("opencode/claude-fable-5")
+      expect(result.stdout).toContain("deprecated / experimental")
+      expect(result.stdout).toContain("Claude Code tokens")
+      expect(result.stdout).toContain("not used")
+      // token from fixture auth.json must never leak
+      expect(result.stdout).not.toContain(FAKE_OPENCODE_TOKEN)
+      expect(result.stderr).not.toContain(FAKE_OPENCODE_TOKEN)
+    },
+    DOCTOR_TIMEOUT,
+  )
+
+  test(
+    "auth present → 'OpenCode account authentication detected', exit stays 0",
+    async () => {
+      const { env } = buildFixture({ authJson: "valid", fableInCatalog: true })
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("OpenCode account authentication detected")
+      expect(result.exitCode).toBe(0)
+    },
+    DOCTOR_TIMEOUT,
+  )
+
+  test(
+    "auth.json missing → WARN only, doctor still exits 0",
+    async () => {
+      const { env } = buildFixture({ fableInCatalog: true }) // no authJson
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("auth.json not found")
+      expect(result.exitCode).toBe(0)
+    },
+    DOCTOR_TIMEOUT,
+  )
+
+  test(
+    "auth.json invalid JSON → sanitized warning, exit 0",
+    async () => {
+      const { env } = buildFixture({ authJson: "invalid", fableInCatalog: true })
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("not valid JSON")
+      expect(result.exitCode).toBe(0)
+    },
+    DOCTOR_TIMEOUT,
+  )
+
+  test(
+    "opencode entry absent from auth.json → WARN, exit 0, no token leak",
+    async () => {
+      const { env } = buildFixture({ authJson: "absent", fableInCatalog: true })
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("no opencode entry")
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).not.toContain(FAKE_OPENCODE_TOKEN)
+    },
+    DOCTOR_TIMEOUT,
+  )
+
+  test(
+    "fable removed from catalog → WARN 'not in catalog', exit 0",
+    async () => {
+      const { env } = buildFixture({ authJson: "valid" }) // no fableInCatalog
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("not in catalog")
+      expect(result.exitCode).toBe(0)
+    },
+    DOCTOR_TIMEOUT,
+  )
+
+  test(
+    "never claims official Anthropic access",
+    async () => {
+      const { env } = buildFixture({ authJson: "valid", fableInCatalog: true })
+      const result = await spawnDoctor(["--verbose"], env)
+      expect(result.stdout).not.toContain("Anthropic API connected")
+      expect(result.stdout).not.toContain("ANTHROPIC_API_KEY present")
+      expect(result.stdout).not.toContain(FAKE_OPENCODE_TOKEN)
     },
     DOCTOR_TIMEOUT,
   )

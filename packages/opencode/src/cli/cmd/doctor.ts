@@ -17,7 +17,7 @@
 import os from "os"
 import fs from "fs"
 import path from "path"
-import { execSync } from "child_process"
+import { execSync, spawnSync } from "child_process"
 import { cmd } from "./cmd"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 
@@ -31,6 +31,8 @@ const HUBCLI_CONFIG = path.join(HUBCLI_HOME, "opencode.json")
 const HUBCLI_CREDS = path.join(HUBCLI_HOME, "credentials.env")
 const HUBCLI_LAUNCHER = path.join(HOME, ".local", "bin", "hubcli")
 const HUBCLI_SRC = path.join(HOME, "Hubcli")
+// OpenCode internal auth — stores provider keys for opencode/opencode-go
+const OPENCODE_AUTH = path.join(HOME, ".local", "share", "opencode", "auth.json")
 
 // Base URLs from models.dev — used for connectivity checks only
 const PROVIDER_ENDPOINTS: Record<string, { baseURL: string; keyEnv: string; testModel: string }> = {
@@ -58,6 +60,17 @@ const EXPECTED_MODELS = [
 ]
 
 const CREDENTIAL_VARS = ["DASHSCOPE_API_KEY", "DEEPSEEK_API_KEY"]
+
+// Claude Fable 5 — EXPERIMENTAL. Served by the OpenCode Zen API through the
+// `opencode` provider. Authentication comes from the OpenCode account
+// (auth.json) — no Anthropic API key and no Claude Code tokens are involved.
+// The catalog currently marks this model as deprecated, so all Fable checks
+// are advisory (WARN) and never affect the doctor exit code.
+const FABLE5_PROVIDER = "opencode"
+const FABLE5_MODEL_ID = "claude-fable-5"
+const FABLE5_FULL = `${FABLE5_PROVIDER}/${FABLE5_MODEL_ID}`
+// models.dev cache written by OpenCode itself — source of truth for metadata
+const MODELS_CACHE = path.join(HOME, ".cache", "opencode", "models.json")
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -131,14 +144,6 @@ export function sanitizeError(msg: string): string {
 // Never logs the key; uses process.env which was loaded by the launcher.
 // ---------------------------------------------------------------------------
 
-interface ConnectResult {
-  ok: boolean
-  ms: number
-  response?: string
-  error?: string
-  httpStatus?: number
-}
-
 async function testConnection(providerID: string): Promise<ConnectResult> {
   const cfg = PROVIDER_ENDPOINTS[providerID]
   if (!cfg) return { ok: false, ms: 0, error: "unknown provider" }
@@ -186,6 +191,120 @@ async function testConnection(providerID: string): Promise<ConnectResult> {
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, ms, error: sanitizeError(msg) }
   }
+}
+
+// ---------------------------------------------------------------------------
+// OpenCode auth check — inspects auth.json structure only.
+// Never reads, measures, or prints any part of the stored key.
+// ---------------------------------------------------------------------------
+
+export type AuthState = "present" | "missing-file" | "unreadable" | "invalid-json" | "provider-absent"
+
+export function checkOpenCodeAuth(authPath: string = OPENCODE_AUTH): { state: AuthState; perms: string | null } {
+  const perms = octalPerms(authPath)
+  if (!fs.existsSync(authPath)) return { state: "missing-file", perms: null }
+  let raw: string
+  try {
+    raw = fs.readFileSync(authPath, "utf8")
+  } catch {
+    return { state: "unreadable", perms }
+  }
+  try {
+    const data = JSON.parse(raw) as Record<string, unknown>
+    const entry = data[FABLE5_PROVIDER]
+    if (typeof entry === "object" && entry !== null) return { state: "present", perms }
+    return { state: "provider-absent", perms }
+  } catch {
+    return { state: "invalid-json", perms }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Catalog metadata — read from the models.dev cache OpenCode maintains.
+// Values not present in the cache are reported as "unknown"; nothing is
+// hardcoded so a catalog refresh cannot desynchronize the doctor output.
+// ---------------------------------------------------------------------------
+
+export interface FableCatalogInfo {
+  found: boolean
+  status: string
+  context: string
+  output: string
+  costInput: string
+  costOutput: string
+}
+
+export function readFableCatalog(cachePath: string = MODELS_CACHE): FableCatalogInfo {
+  const unknown: FableCatalogInfo = {
+    found: false,
+    status: "unknown",
+    context: "unknown",
+    output: "unknown",
+    costInput: "unknown",
+    costOutput: "unknown",
+  }
+  try {
+    const raw = fs.readFileSync(cachePath, "utf8")
+    const data = JSON.parse(raw) as Record<string, { models?: Record<string, any> }>
+    const model = data?.[FABLE5_PROVIDER]?.models?.[FABLE5_MODEL_ID]
+    if (!model) return unknown
+    return {
+      found: true,
+      status: typeof model.status === "string" ? model.status : "active",
+      context: model.limit?.context != null ? String(model.limit.context) : "unknown",
+      output: model.limit?.output != null ? String(model.limit.output) : "unknown",
+      costInput: model.cost?.input != null ? `$${model.cost.input}/M` : "unknown",
+      costOutput: model.cost?.output != null ? `$${model.cost.output}/M` : "unknown",
+    }
+  } catch {
+    return unknown
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fable 5 connectivity test — delegates to the HubCli launcher so auth.json
+// is read through the normal OpenCode stack (never extracts the key manually).
+// Runs `hubcli run` only — never `hubcli doctor`, so no recursion is possible.
+// ---------------------------------------------------------------------------
+
+export interface ConnectResult {
+  ok: boolean
+  ms: number
+  response?: string
+  error?: string
+  httpStatus?: number
+  timedOut?: boolean
+}
+
+const FABLE_CONNECT_TIMEOUT_MS = 60_000
+const FABLE_OUTPUT_LIMIT = 64 * 1024 // cap stdout/stderr capture
+
+export function testFableConnection(
+  launcher: string = HUBCLI_LAUNCHER,
+  timeoutMs: number = FABLE_CONNECT_TIMEOUT_MS,
+): ConnectResult {
+  const start = Date.now()
+  // No shell, args as array, cwd inherited, no credentials in argv.
+  const result = spawnSync(launcher, ["run", "--model", FABLE5_FULL, "Responda somente: OK"], {
+    encoding: "utf8",
+    timeout: timeoutMs,
+    maxBuffer: FABLE_OUTPUT_LIMIT,
+    env: { ...process.env, HUBCLI_BRAND: "1" },
+  })
+  const ms = Date.now() - start
+  const timedOut = result.error != null && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT"
+  if (timedOut) {
+    return { ok: false, ms, timedOut: true, error: `timeout after ${timeoutMs / 1000}s` }
+  }
+  if (result.error) {
+    return { ok: false, ms, error: sanitizeError(result.error.message).slice(0, 200) }
+  }
+  if (result.status === 0) {
+    const output = (result.stdout ?? "").slice(0, FABLE_OUTPUT_LIMIT).trim()
+    return { ok: true, ms, response: output.slice(0, 200) }
+  }
+  const errText = sanitizeError(((result.stderr ?? "") + (result.stdout ?? "")).slice(0, FABLE_OUTPUT_LIMIT).trim()).slice(0, 200)
+  return { ok: false, ms, error: errText || `exit ${result.status ?? "?"}` }
 }
 
 // ---------------------------------------------------------------------------
@@ -354,9 +473,71 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean }): Promise<
     addCheck("repository", "OK", "clean")
   }
 
+  // ── Claude Fable 5 (experimental) ─────────────────────────────────────────
+  // All Fable checks are advisory (WARN at worst) — the model is experimental
+  // and its absence must never fail the doctor.
+  section("Claude Fable 5 (experimental)")
+  line("Provider", `OpenCode Zen (${FABLE5_PROVIDER})`)
+  line("Model", FABLE5_FULL)
+
+  const fableCatalog = readFableCatalog()
+  if (!fableCatalog.found) {
+    line("Catalog status", "not in catalog")
+    addCheck("fable5-catalog", "WARN", "model absent from models.json cache — experimental model may have been removed")
+  } else {
+    const statusLabel = fableCatalog.status === "deprecated" ? "deprecated / experimental" : fableCatalog.status
+    line("Catalog status", statusLabel)
+  }
+
+  const fableAuth = checkOpenCodeAuth()
+  const authLabels: Record<AuthState, string> = {
+    "present": "OpenCode account authentication detected",
+    "missing-file": "auth.json not found",
+    "unreadable": "auth.json not readable",
+    "invalid-json": "auth.json is not valid JSON",
+    "provider-absent": "no opencode entry in auth.json",
+  }
+  line("Authentication", authLabels[fableAuth.state])
+  line("Claude Code tokens", "not used")
+  if (fableAuth.perms && fableAuth.state !== "missing-file") {
+    line("Auth file perms", fableAuth.perms === "600" ? "600 (OK)" : `${fableAuth.perms} (consider: chmod 600)`)
+  }
+  addCheck(
+    "fable5-auth",
+    fableAuth.state === "present" ? "OK" : "WARN",
+    fableAuth.state === "present" ? "opencode account auth found" : authLabels[fableAuth.state],
+  )
+  if (opts.verbose) {
+    line("Auth file", shortPath(OPENCODE_AUTH))
+    line("Context", fableCatalog.context)
+    line("Max output", fableCatalog.output)
+    line("Cost input", fableCatalog.costInput)
+    line("Cost output", fableCatalog.costOutput)
+  }
+
   // ── Connectivity ──────────────────────────────────────────────────────────
   if (opts.connect) {
     section("Connectivity")
+
+    // Fable 5 (experimental) — advisory only. Failure is a WARN and never
+    // changes the exit code; only the required providers below can do that.
+    process.stdout.write(`  Testing Claude Fable 5...`)
+    const fableResult = testFableConnection()
+    const fableTiming = `${(fableResult.ms / 1000).toFixed(1)}s`
+    if (fableResult.ok) {
+      process.stdout.write(`\r  ${"Claude Fable 5 (exp)".padEnd(26)} OK (${fableTiming})\n`)
+      addCheck(`connect-${FABLE5_FULL}`, "OK", `${fableResult.ms}ms`)
+    } else {
+      const kind = fableResult.timedOut ? "TIMEOUT" : "UNAVAILABLE"
+      process.stdout.write(
+        `\r  ${"Claude Fable 5 (exp)".padEnd(26)} ${kind} (${fableTiming}) — ${sanitizeError(fableResult.error ?? "unknown")} [experimental — not required]\n`,
+      )
+      addCheck(`connect-${FABLE5_FULL}`, "WARN", `experimental model unavailable: ${fableResult.error ?? "unknown"}`)
+    }
+    if (opts.verbose && fableResult.response) {
+      line("  Response", fableResult.response)
+    }
+
     for (const [providerID, provCfg] of Object.entries(PROVIDER_ENDPOINTS)) {
       const label = providerID === "alibaba-token-plan" ? "Alibaba Token Plan" : "DeepSeek"
       process.stdout.write(`  Testing ${label}...`)
