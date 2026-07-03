@@ -260,6 +260,7 @@ else
 #
 DASHSCOPE_API_KEY=
 DEEPSEEK_API_KEY=
+NVIDIA_API_KEY=
 CREDSEOF
     chmod 600 "$HUBCLI_CREDS"
     _ok "Criado: $HUBCLI_CREDS (600, template vazio)"
@@ -278,8 +279,18 @@ _needs_create=1
 if [ -f "$LAUNCHER_PATH" ]; then
   # Verificar se é do HubCli (contém a assinatura esperada)
   if grep -q "HUBCLI_SRC=" "$LAUNCHER_PATH" 2>/dev/null; then
-    _ok "Launcher existente e compatível: $LAUNCHER_PATH"
-    _needs_create=0
+    if grep -q "NVIDIA_API_KEY" "$LAUNCHER_PATH" 2>/dev/null && grep -q "HUBCLI_CALLER_PWD" "$LAUNCHER_PATH" 2>/dev/null; then
+      _ok "Launcher existente e atualizado: $LAUNCHER_PATH"
+      _needs_create=0
+    elif [ "$MODE" = "check" ]; then
+      _warn "Launcher existente mas DESATUALIZADO (sem NVIDIA/MCP). Rode: setup.sh --repair"
+      _needs_create=0
+    else
+      _warn "Launcher desatualizado — criando backup e atualizando..."
+      _backup="${LAUNCHER_PATH}.backup.${TIMESTAMP}"
+      [ "$DRY_RUN" -eq 0 ] && cp "$LAUNCHER_PATH" "$_backup" && _ok "Backup: $_backup"
+      _needs_create=1
+    fi
   else
     _warn "Launcher existente parece ser de outra instalação."
     if [ "$MODE" = "check" ]; then
@@ -299,62 +310,15 @@ if [ "$_needs_create" -eq 1 ] && [ "$MODE" != "check" ]; then
   if [ "$DRY_RUN" -eq 0 ]; then
     mkdir -p "$LAUNCHER_DIR"
 
-    # Escrever o launcher — aspas duplas nos heredoc delimiters
-    # para que $HOME e $HUBCLI_SRC do setup sejam expandidos corretamente,
-    # mas as variáveis internas do launcher (\$var) não sejam.
-    cat > "$LAUNCHER_PATH" << LAUNCHEREOF
-#!/usr/bin/env bash
-set -euo pipefail
-
-BUN="\${HOME}/.bun/bin/bun"
-HUBCLI_SRC="${HUBCLI_SRC}"
-HUBCLI_CONFIG_DIR="\${HOME}/.hubcli"
-HUBCLI_CREDS="\${HOME}/.hubcli/credentials.env"
-ORIGINAL_PWD="\${PWD}"
-
-if [ ! -x "\$BUN" ]; then
-  printf 'hubcli: bun não encontrado em %s\n' "\$BUN" >&2; exit 1
-fi
-if [ ! -d "\$HUBCLI_SRC" ]; then
-  printf 'hubcli: repositório não encontrado em %s\n' "\$HUBCLI_SRC" >&2; exit 1
-fi
-
-# Carregador seguro de credenciais — sem eval, sem source, whitelist only
-if [ -f "\$HUBCLI_CREDS" ]; then
-  _creds_perms="\$(stat -f "%Lp" "\$HUBCLI_CREDS" 2>/dev/null || stat -c "%a" "\$HUBCLI_CREDS" 2>/dev/null || echo "unknown")"
-  if [ "\$_creds_perms" != "600" ]; then
-    printf 'hubcli: credentials.env tem permissão insegura (%s). chmod 600 %s\n' "\$_creds_perms" "\$HUBCLI_CREDS" >&2
-    exit 1
-  fi
-  _creds_dashscope="" _creds_deepseek=""
-  while IFS= read -r _creds_line || [ -n "\$_creds_line" ]; do
-    case "\$_creds_line" in "#"*|"") continue ;; esac
-    _creds_name="\${_creds_line%%=*}"
-    _creds_val="\${_creds_line#*=}"
-    case "\$_creds_name" in
-      DASHSCOPE_API_KEY) _creds_dashscope="\$_creds_val" ;;
-      DEEPSEEK_API_KEY)  _creds_deepseek="\$_creds_val"  ;;
-      *) printf 'hubcli: variável desconhecida em credentials.env: %s\n' "\$_creds_name" >&2 ;;
-    esac
-  done < "\$HUBCLI_CREDS"
-  [ -n "\$_creds_dashscope" ] && [ -z "\${DASHSCOPE_API_KEY:-}" ] && { DASHSCOPE_API_KEY="\$_creds_dashscope"; export DASHSCOPE_API_KEY; }
-  [ -n "\$_creds_deepseek"  ] && [ -z "\${DEEPSEEK_API_KEY:-}"  ] && { DEEPSEEK_API_KEY="\$_creds_deepseek";  export DEEPSEEK_API_KEY;  }
-  unset _creds_perms _creds_line _creds_name _creds_val _creds_dashscope _creds_deepseek
-fi
-
-_first_pos=""
-for _a in "\${@:-}"; do
-  case "\$_a" in -*) continue ;; *) _first_pos="\$_a"; break ;; esac
-done
-
-if [ -z "\$_first_pos" ]; then
-  exec env HUBCLI_BRAND=1 OPENCODE_CONFIG_DIR="\$HUBCLI_CONFIG_DIR" PWD="\$ORIGINAL_PWD" \\
-    "\$BUN" --cwd "\$HUBCLI_SRC/packages/opencode" --conditions=browser src/index.ts "\$ORIGINAL_PWD" "\$@"
-else
-  exec env HUBCLI_BRAND=1 OPENCODE_CONFIG_DIR="\$HUBCLI_CONFIG_DIR" PWD="\$ORIGINAL_PWD" \\
-    "\$BUN" --cwd "\$HUBCLI_SRC/packages/opencode" --conditions=browser src/index.ts "\$@"
-fi
-LAUNCHEREOF
+    # Instalar o launcher a partir do template canônico do repositório.
+    # O template é a fonte única de verdade (script/hubcli/launcher-template.sh);
+    # __HUBCLI_SRC__ é substituído pelo caminho real de packages/opencode.
+    _template="${HUBCLI_SRC}/script/hubcli/launcher-template.sh"
+    if [ ! -f "$_template" ]; then
+      _fail "Template do launcher não encontrado: $_template"
+      exit 1
+    fi
+    sed "s|__HUBCLI_SRC__|${HUBCLI_SRC}/packages/opencode|" "$_template" > "$LAUNCHER_PATH"
 
     chmod 755 "$LAUNCHER_PATH"
     _ok "Launcher criado: $LAUNCHER_PATH (755)"
