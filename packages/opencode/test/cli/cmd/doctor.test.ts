@@ -21,7 +21,13 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import fs from "fs"
 import os from "os"
 import path from "path"
-import { sanitizeError, checkOpenCodeAuth, readFableCatalog, testFableConnection } from "../../../src/cli/cmd/doctor"
+import {
+  sanitizeError,
+  summarizeProviderError,
+  checkOpenCodeAuth,
+  readFableCatalog,
+  testFableConnection,
+} from "../../../src/cli/cmd/doctor"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -241,6 +247,53 @@ describe("sanitizeError", () => {
     expect(sanitizeError("DASHSCOPE_API_KEY not set")).toBe("DASHSCOPE_API_KEY not set")
     expect(sanitizeError("DEEPSEEK_API_KEY missing")).toBe("DEEPSEEK_API_KEY missing")
   })
+
+  test("masks nvapi- NVIDIA keys", () => {
+    expect(sanitizeError("Authorization: Bearer nvapi-ABCDEF123456")).toBe("Authorization: Bearer nvapi-••••")
+  })
+})
+
+describe("summarizeProviderError (NVIDIA 400/500 regression)", () => {
+  test("HTTP 400 body is reduced to a short reason — never the raw JSON", () => {
+    // This is the exact shape the user observed for MiniMax M3 post-merge.
+    const raw = 'Bad Request: {"status":400,"title":"Bad Request","detail":"model rejected the request payload with a long body that must not be printed"}'
+    const out = summarizeProviderError(raw)
+    expect(out).toBe("request rejected by provider (HTTP 400)")
+    // no raw/partial JSON body leaks through
+    expect(out).not.toContain("{")
+    expect(out).not.toContain("detail")
+    expect(out).not.toContain("title")
+  })
+
+  test("mid-stream internal_server_error maps to HTTP 500", () => {
+    const raw = 'data: {"error":{"message":"Internal server error","type":"internal_server_error","code":500}}'
+    const out = summarizeProviderError(raw)
+    expect(out).toBe("provider internal error (HTTP 500)")
+    expect(out).not.toContain("{")
+  })
+
+  test("classifies auth, not-found, rate limit", () => {
+    expect(summarizeProviderError("HTTP 401 Unauthorized")).toContain("HTTP 401")
+    expect(summarizeProviderError("HTTP 403 Forbidden")).toContain("HTTP 403")
+    expect(summarizeProviderError("model not found HTTP 404")).toBe("model or endpoint not found (HTTP 404)")
+    expect(summarizeProviderError("HTTP 429 Too Many Requests")).toBe("rate limited or out of quota (HTTP 429)")
+  })
+
+  test("timeout is recognized", () => {
+    expect(summarizeProviderError("timeout after 60s")).toBe("timeout waiting for provider")
+  })
+
+  test("still masks secrets inside an error body", () => {
+    const out = summarizeProviderError("weird error nvapi-SECRETKEY12345 with no status code here at all")
+    expect(out).not.toContain("nvapi-SECRETKEY12345")
+    expect(out).toContain("nvapi-••••")
+  })
+
+  test("body-free fallback stays short and single-line", () => {
+    const out = summarizeProviderError("some\nmultiline\nprovider message without a recognizable status code that is quite long indeed and keeps going")
+    expect(out).not.toContain("\n")
+    expect(out.length).toBeLessThanOrEqual(80)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -390,6 +443,47 @@ describe("doctor command — exit code 3 (connectivity failure)", () => {
       const result = await spawnDoctor(["--connect"], env)
       expect(result.exitCode).toBe(3)
       expect(result.stdout).toContain("no OpenCode Zen model reachable")
+    },
+    60_000,
+  )
+
+  test(
+    "NVIDIA 400 body → WARNING (not FAIL), sanitized reason, no raw JSON, no secret leak",
+    async () => {
+      const { home, env } = buildFixture({
+        env: {
+          DASHSCOPE_API_KEY: "fake",
+          DEEPSEEK_API_KEY: "fake",
+          NVIDIA_API_KEY: "nvapi-fake-probe-key",
+        },
+      })
+      // Launcher stub: Zen models answer OK; the NVIDIA probe model returns a
+      // raw 400 body (the exact shape the user saw) with an embedded secret.
+      const launcher = path.join(home, ".local", "bin", "hubcli")
+      fs.writeFileSync(
+        launcher,
+        '#!/bin/sh\ncase "$*" in\n' +
+          '  *minimax-m3*) echo \'Error: Bad Request: {"status":400,"title":"Bad Request","detail":"leak nvapi-SECRET99999 must not print"}\' >&2; exit 1 ;;\n' +
+          "  *) echo OK; exit 0 ;;\n" +
+          "esac\n",
+        "utf8",
+      )
+      fs.chmodSync(launcher, 0o755)
+      const result = await spawnDoctor(["--connect"], env)
+
+      // NVIDIA is advisory: shown as WARNING with a clean reason.
+      expect(result.stdout).toContain("NVIDIA NIM")
+      expect(result.stdout).toContain("request rejected by provider (HTTP 400)")
+      expect(result.stdout).toContain("verify model compatibility")
+      // Never dumps the raw/partial JSON body.
+      expect(result.stdout).not.toContain('{"status":400')
+      expect(result.stdout).not.toContain('"title"')
+      expect(result.stdout).not.toContain("detail")
+      // Never leaks the secret embedded in the body.
+      expect(result.stdout).not.toContain("nvapi-SECRET99999")
+      expect(result.stderr).not.toContain("nvapi-SECRET99999")
+      // NVIDIA must be a WARN, never a FAIL line.
+      expect(result.stdout).not.toMatch(/FAILED.*NVIDIA|NVIDIA.*FAILED/)
     },
     60_000,
   )

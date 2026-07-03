@@ -75,7 +75,18 @@ const FABLE5_FULL = `${FABLE5_PROVIDER}/${FABLE5_MODEL_ID}`
 // (2026-07-02). Auth: OpenCode account (auth.json). These are NOT the official
 // OpenAI/Moonshot providers; no OPENAI_API_KEY or MOONSHOT_API_KEY involved.
 // NVIDIA NIM — native catalog provider, validated by real calls (2026-07-02).
-// Advisory in the doctor (WARN on failure) while the integration matures.
+// Advisory in the doctor (WARN on failure) — never affects the exit code.
+//
+// Known provider-side instability (observed 2026-07-02, post-upstream-merge):
+// minimaxai/minimax-m3 returns intermittent server-side errors (HTTP 500
+// internal_server_error mid-stream, empty non-stream responses, occasional
+// HTTP 400). Verified with a MINIMAL direct request to the NVIDIA endpoint
+// (no HubCli payload, no reasoning/tools/temperature): 0/8 succeeded. This is
+// NOT a HubCli payload regression — the upstream merge did not change the
+// @ai-sdk/openai-compatible request path. The AI SDK's automatic retries let
+// `hubcli run` still succeed most of the time, but the raw provider is flaky.
+// The probe therefore stays on M3 (the primary model) and reports provider
+// instability as WARN; M3 must not be described as healthy while this holds.
 const NVIDIA_PROVIDER = "nvidia"
 const NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1"
 const NVIDIA_KEY_ENV = "NVIDIA_API_KEY"
@@ -153,7 +164,33 @@ function gitStatus(repoPath: string): string {
 
 /** Sanitize error messages: remove any sk- prefixed strings. Exported for testing. */
 export function sanitizeError(msg: string): string {
-  return msg.replace(/sk-[A-Za-z0-9]{4,}/g, "sk-••••")
+  return msg
+    .replace(/sk-[A-Za-z0-9]{4,}/g, "sk-••••")
+    .replace(/nvapi-[A-Za-z0-9_-]{4,}/g, "nvapi-••••")
+}
+
+/**
+ * Reduce a provider error (which may embed a raw JSON body) to a single short,
+ * human-readable reason — never dumps the raw/partial JSON body. Used so the
+ * doctor shows "request rejected by provider (HTTP 400)" instead of a truncated
+ * `{"status":400,"title":"Bad Request","detail":"...` fragment.
+ */
+export function summarizeProviderError(msg: string): string {
+  const s = sanitizeError(msg)
+  if (/\btimeout\b/i.test(s)) return "timeout waiting for provider"
+  const status = /\b(4\d\d|5\d\d)\b/.exec(s)?.[1] ?? /"status"\s*:\s*(\d{3})/.exec(s)?.[1]
+  if (status) {
+    const code = Number(status)
+    if (code === 400) return "request rejected by provider (HTTP 400)"
+    if (code === 401 || code === 403) return "authentication/authorization rejected (HTTP " + code + ")"
+    if (code === 404) return "model or endpoint not found (HTTP 404)"
+    if (code === 429) return "rate limited or out of quota (HTTP 429)"
+    if (code >= 500) return "provider internal error (HTTP " + code + ")"
+    return `provider error (HTTP ${code})`
+  }
+  if (/internal_server_error/i.test(s)) return "provider internal error (HTTP 500)"
+  // no recognizable status: return a short, single-line, body-free snippet
+  return s.replace(/\s+/g, " ").slice(0, 80)
 }
 
 // ---------------------------------------------------------------------------
@@ -715,8 +752,9 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean; mcp: boolea
         addCheck(`connect-${full}`, "OK", `${zr.ms}ms`)
       } else {
         const kind = zr.timedOut ? "TIMEOUT" : "UNAVAILABLE"
-        process.stdout.write(`\r  ${label.padEnd(26)} ${kind} (${zt}) — ${sanitizeError(zr.error ?? "unknown")}\n`)
-        addCheck(`connect-${full}`, "WARN", `zen model unavailable: ${zr.error ?? "unknown"}`)
+        const zreason = zr.timedOut ? "timeout waiting for provider" : summarizeProviderError(zr.error ?? "unknown")
+        process.stdout.write(`\r  ${label.padEnd(26)} ${kind} (${zt}) — ${zreason}\n`)
+        addCheck(`connect-${full}`, "WARN", `zen model unavailable: ${zreason}`)
       }
     }
     if (!zenAnyOk) {
@@ -734,9 +772,15 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean; mcp: boolea
         process.stdout.write(`\r  ${"NVIDIA NIM".padEnd(26)} OK (${nt})\n`)
         addCheck(`connect-${nvFull}`, "OK", `${nr.ms}ms`)
       } else {
-        const kind = nr.timedOut ? "TIMEOUT" : "UNAVAILABLE"
-        process.stdout.write(`\r  ${"NVIDIA NIM".padEnd(26)} ${kind} (${nt}) — ${sanitizeError(nr.error ?? "unknown").slice(0, 120)}\n`)
-        addCheck(`connect-${nvFull}`, "WARN", `nvidia model unavailable: ${sanitizeError(nr.error ?? "unknown").slice(0, 120)}`)
+        // Advisory: never fails the doctor. Show a sanitized, body-free reason
+        // (no raw/partial JSON) in the Status/Probe/Reason/Action format.
+        const reason = nr.timedOut ? "timeout waiting for provider" : summarizeProviderError(nr.error ?? "unknown")
+        process.stdout.write(`\r  ${"NVIDIA NIM".padEnd(26)} WARNING (${nt})\n`)
+        line("  Status", "warning")
+        line("  Probe model", nvFull)
+        line("  Reason", reason)
+        line("  Action", "verify model compatibility / provider may be temporarily unstable")
+        addCheck(`connect-${nvFull}`, "WARN", `${reason} — verify model compatibility`)
       }
     } else {
       line("NVIDIA NIM", `skipped (${NVIDIA_KEY_ENV} missing)`)
@@ -758,13 +802,15 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean; mcp: boolea
         const entitlement = (result.error ?? "").includes("Unpurchased") || result.httpStatus === 403
         process.stdout.write(`\r  ${label.padEnd(26)} UNAVAILABLE (${timing})\n`)
         line("  Status", "unavailable")
-        line("  Reason", entitlement ? "plan or model entitlement" : sanitizeError(result.error ?? "unknown").slice(0, 120))
+        line("  Reason", entitlement ? "plan or model entitlement" : summarizeProviderError(result.error ?? "unknown"))
         line("  Action", "verify Token Plan subscription")
-        addCheck(`connect-${providerID}`, "WARN", entitlement ? "plan or model entitlement — verify Token Plan subscription" : `unavailable: ${sanitizeError(result.error ?? "unknown").slice(0, 120)}`)
+        addCheck(`connect-${providerID}`, "WARN", entitlement ? "plan or model entitlement — verify Token Plan subscription" : `unavailable: ${summarizeProviderError(result.error ?? "unknown")}`)
       } else {
-        const errMsg = result.error ?? `HTTP ${result.httpStatus}`
-        process.stdout.write(`\r  ${label.padEnd(26)} FAILED (${timing}) — ${sanitizeError(errMsg)}\n`)
-        addCheck(`connect-${providerID}`, "FAIL", errMsg)
+        // Required provider (DeepSeek) failure → exit 3. Reason is summarized
+        // so no raw/partial JSON body is printed.
+        const reason = summarizeProviderError(result.error ?? `HTTP ${result.httpStatus ?? "?"}`)
+        process.stdout.write(`\r  ${label.padEnd(26)} FAILED (${timing}) — ${reason}\n`)
+        addCheck(`connect-${providerID}`, "FAIL", reason)
         if (exitCode < 3) exitCode = 3
       }
       if (opts.verbose && result.response) {
