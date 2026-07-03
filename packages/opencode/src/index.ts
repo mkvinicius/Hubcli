@@ -32,6 +32,8 @@ import { Heap } from "./cli/heap"
 import { SCRIPT, BRAND } from "./cli/brand"
 import { DoctorCommand } from "./cli/cmd/doctor"
 import { MaintenanceCommand } from "./cli/cmd/maintenance"
+import { ProfileCommand, RouteCommand } from "./cli/hubcli/profile-cmd"
+import { AuthCommand } from "./cli/hubcli/auth-cmd"
 
 const args = hideBin(process.argv)
 
@@ -108,6 +110,9 @@ const cli = yargs(args)
 if (BRAND === "HubCli") {
   cli.command(DoctorCommand)
   cli.command(MaintenanceCommand)
+  cli.command(ProfileCommand)
+  cli.command(RouteCommand)
+  cli.command(AuthCommand)
 }
 cli.fail((msg, err) => {
     if (

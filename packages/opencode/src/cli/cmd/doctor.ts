@@ -11,7 +11,8 @@
  *   0 — all required checks passed
  *   1 — missing config file or structural error
  *   2 — insecure file permissions
- *   3 — connectivity failure (--connect only)
+ *   3 — connectivity failure (--connect / --all only)
+ *   4 — MCP server failure (--mcp / --all only)
  */
 
 import os from "os"
@@ -339,12 +340,12 @@ export function testFableConnection(
 // Config reader — reads opencode.json without running the Effect runtime
 // ---------------------------------------------------------------------------
 
-interface HubcliConfig {
+export interface HubcliConfig {
   model?: string
   provider?: Record<string, { whitelist?: string[] }>
 }
 
-function readConfig(): { config: HubcliConfig | null; error: string | null } {
+export function readConfig(): { config: HubcliConfig | null; error: string | null } {
   try {
     if (!fs.existsSync(HUBCLI_CONFIG)) return { config: null, error: "file not found" }
     const raw = fs.readFileSync(HUBCLI_CONFIG, "utf8")
@@ -359,7 +360,51 @@ function readConfig(): { config: HubcliConfig | null; error: string | null } {
 // Main runner
 // ---------------------------------------------------------------------------
 
-async function runDoctor(opts: { connect: boolean; verbose: boolean }): Promise<number> {
+/**
+ * Spawns the real MCP server through the launcher and performs an
+ * initialize + tools/list handshake over stdio. 15s budget.
+ */
+export async function testMcpServer(
+  launcher: string = HUBCLI_LAUNCHER,
+): Promise<{ ok: boolean; tools: number; ms: number; error?: string }> {
+  const { spawn } = await import("child_process")
+  const start = Date.now()
+  return new Promise((resolve) => {
+    const proc = spawn(launcher, ["mcp", "serve"], {
+      stdio: ["pipe", "pipe", "ignore"],
+      env: { ...process.env, HUBCLI_BRAND: "1" },
+    })
+    let buffer = ""
+    let done = false
+    const finish = (r: { ok: boolean; tools: number; error?: string }) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      proc.kill()
+      resolve({ ...r, ms: Date.now() - start })
+    }
+    const timer = setTimeout(() => finish({ ok: false, tools: 0, error: "timeout after 15s" }), 15_000)
+    proc.on("error", (e) => finish({ ok: false, tools: 0, error: sanitizeError(e.message).slice(0, 120) }))
+    proc.stdout.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf8")
+      for (const lineRaw of buffer.split("\n")) {
+        try {
+          const msg = JSON.parse(lineRaw)
+          if (msg.id === 2 && msg.result?.tools) {
+            finish({ ok: true, tools: msg.result.tools.length })
+          }
+        } catch {}
+      }
+    })
+    proc.stdin.write(
+      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"doctor","version":"1"}}}\n' +
+        '{"jsonrpc":"2.0","method":"notifications/initialized"}\n' +
+        '{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n',
+    )
+  })
+}
+
+async function runDoctor(opts: { connect: boolean; verbose: boolean; mcp: boolean }): Promise<number> {
   const checks: Check[] = []
   let exitCode = 0
 
@@ -578,6 +623,59 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean }): Promise<
     }
   }
 
+  // ── Profiles ──────────────────────────────────────────────────────────────
+  section("Profiles")
+  {
+    const { loadProfiles } = await import("../hubcli/profiles")
+    const { data: profilesData, source: profilesSource, warning: profilesWarning } = loadProfiles()
+    line("Profiles file", profilesSource === "file" ? "~/.hubcli/profiles.json" : "defaults (no file)")
+    line("Profiles", Object.keys(profilesData.profiles).join(", "))
+    line("Current", profilesData.current ?? "(none)")
+    if (profilesData.degraded_providers.length > 0) {
+      line("Degraded providers", profilesData.degraded_providers.join(", "))
+    }
+    if (profilesWarning) {
+      addCheck("profiles", "WARN", profilesWarning)
+    } else {
+      addCheck("profiles", "OK", `${Object.keys(profilesData.profiles).length} valid profiles (${profilesSource})`)
+    }
+  }
+
+  // ── Integrations (presence only — file contents never printed) ───────────
+  section("Integrations")
+  {
+    const codexConfig = path.join(HOME, ".codex", "config.toml")
+    let codexRegistered = false
+    try {
+      codexRegistered = fs.readFileSync(codexConfig, "utf8").includes("[mcp_servers.hubcli]")
+    } catch {}
+    line("Codex CLI", codexRegistered ? "hubcli MCP server registered" : "not registered")
+    addCheck("integration-codex", codexRegistered ? "OK" : "WARN", codexRegistered ? "registered" : "run: codex mcp add hubcli -- ~/.local/bin/hubcli mcp serve")
+
+    const claudeConfig = path.join(HOME, ".claude.json")
+    let claudeRegistered = false
+    try {
+      const parsed = JSON.parse(fs.readFileSync(claudeConfig, "utf8")) as { mcpServers?: Record<string, unknown> }
+      claudeRegistered = !!parsed.mcpServers && "hubcli" in parsed.mcpServers
+    } catch {}
+    line("Claude Code", claudeRegistered ? "hubcli MCP server registered" : "not registered")
+    addCheck("integration-claude", claudeRegistered ? "OK" : "WARN", claudeRegistered ? "registered" : "run: claude mcp add --scope user hubcli -- ~/.local/bin/hubcli mcp serve")
+  }
+
+  // ── MCP server (--mcp / --all) — spawns the real server over stdio ───────
+  if (opts.mcp) {
+    section("MCP server")
+    const mcpResult = await testMcpServer()
+    if (mcpResult.ok) {
+      line("hubcli mcp serve", `OK — ${mcpResult.tools} tools in ${(mcpResult.ms / 1000).toFixed(1)}s`)
+      addCheck("mcp-server", "OK", `${mcpResult.tools} tools`)
+    } else {
+      line("hubcli mcp serve", `FAILED — ${mcpResult.error}`)
+      addCheck("mcp-server", "FAIL", mcpResult.error ?? "unknown")
+      if (exitCode === 0) exitCode = 4
+    }
+  }
+
   // ── Connectivity ──────────────────────────────────────────────────────────
   if (opts.connect) {
     section("Connectivity")
@@ -716,8 +814,22 @@ export const DoctorCommand = cmd({
         type: "boolean",
         default: false,
         describe: "show additional details (endpoints, model list, apiKey variable names)",
+      })
+      .option("mcp", {
+        type: "boolean",
+        default: false,
+        describe: "spawn the MCP server and verify the stdio handshake",
+      })
+      .option("all", {
+        type: "boolean",
+        default: false,
+        describe: "run every check (equivalent to --connect --mcp)",
       }),
   async handler(args) {
-    process.exitCode = await runDoctor({ connect: !!args.connect, verbose: !!args.verbose })
+    process.exitCode = await runDoctor({
+      connect: !!args.connect || !!args.all,
+      verbose: !!args.verbose,
+      mcp: !!args.mcp || !!args.all,
+    })
   },
 })
