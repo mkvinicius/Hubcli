@@ -163,6 +163,15 @@ export const RunCommand = effectCmd({
         type: "boolean",
         describe: "share the session",
       })
+      .option("profile", {
+        type: "string",
+        describe: "HubCli profile to route the model (coding|fast|reasoning|review|long-context)",
+      })
+      .option("no-fallback", {
+        type: "boolean",
+        default: false,
+        describe: "with --profile, always use the profile's first model",
+      })
       .option("model", {
         type: "string",
         alias: ["m"],
@@ -260,6 +269,22 @@ export const RunCommand = effectCmd({
       const die = (message: string): never => {
         UI.error(message)
         process.exit(1)
+      }
+
+      // HubCli profile routing — explicit and inspectable (hubcli route explain).
+      // Selection happens before the session starts; args.model wins if given.
+      if (process.env["HUBCLI_BRAND"] && (args as { profile?: string }).profile && !args.model) {
+        const { resolveProfile } = await import("@/cli/hubcli/profiles")
+        const routed = resolveProfile((args as { profile?: string }).profile!, {
+          noFallback: !!(args as { noFallback?: boolean }).noFallback,
+        })
+        if (!routed.ok || !routed.model) die(`profile routing failed: ${routed.error}`)
+        args.model = routed.model
+        process.stderr.write(
+          `hubcli: profile ${routed.profile} → ${routed.model}` +
+            (routed.fallback ? " (fallback — see: hubcli route explain --profile " + routed.profile + ")" : "") +
+            "\n",
+        )
       }
       const dieInteractive = (error: unknown): never => {
         if (error instanceof Error && error.message === INTERACTIVE_INPUT_ERROR) {
@@ -964,6 +989,9 @@ export async function runMini(input: MiniCommandInput) {
     $0: "opencode",
     _: ["mini"],
     message: input.prompt ? [input.prompt] : [],
+    profile: undefined,
+    "no-fallback": false,
+    noFallback: false,
     command: undefined,
     continue: input.continue,
     session: input.session,
