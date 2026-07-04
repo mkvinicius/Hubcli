@@ -69,6 +69,7 @@ export function retryable(error: Err, provider: string) {
   // context overflow errors should not be retried
   if (SessionV1.ContextOverflowError.isInstance(error)) return undefined
   if (SessionV1.APIError.isInstance(error)) {
+    if (isConnectionUnavailable(error)) return undefined
     const status = error.data.statusCode
     // 5xx errors are transient server failures and should always be retried,
     // even when the provider SDK doesn't explicitly mark them as retryable.
@@ -149,6 +150,17 @@ export function retryable(error: Err, provider: string) {
     return { message: "Rate Limited" }
   }
   return undefined
+}
+
+function isConnectionUnavailable(error: SessionV1.APIError) {
+  if (error.data.statusCode !== undefined) return false
+  const message = error.data.message.toLowerCase()
+  return (
+    message.includes("cannot connect to api") ||
+    message.includes("unable to connect") ||
+    message.includes("connectionrefused") ||
+    message.includes("connection refused")
+  )
 }
 
 function str(value: unknown) {

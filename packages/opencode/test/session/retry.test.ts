@@ -182,6 +182,17 @@ describe("session.retry.retryable", () => {
     })
   })
 
+  test("does not retry connection-unavailable API errors without an HTTP status", () => {
+    const error = Schema.decodeUnknownSync(SessionV1.APIError.Schema)(
+      new SessionV1.APIError({
+        message: "Cannot connect to API: Unable to connect. Is the computer able to access the url?",
+        isRetryable: true,
+      }).toObject(),
+    )
+
+    expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()
+  })
+
   test("does not retry context overflow errors", () => {
     const error = new SessionV1.ContextOverflowError({
       message: "Input exceeds context window of this model",

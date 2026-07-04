@@ -269,6 +269,10 @@ export const RunCommand = effectCmd({
         default: false,
         hidden: true,
         describe: "enable direct interactive demo slash commands; pass one as the message to run it immediately",
+      })
+      .middleware((argv) => {
+        if (argv.attach || argv.mini || argv.interactive) return
+        process.env.OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER ??= "1"
       }),
   handler: Effect.fn("Cli.run")(function* (args) {
     const { Agent } = yield* Effect.promise(() => import("@/agent/agent"))

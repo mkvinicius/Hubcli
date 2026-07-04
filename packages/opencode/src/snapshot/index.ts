@@ -10,6 +10,7 @@ import { Hash } from "@opencode-ai/core/util/hash"
 import { Config } from "@/config/config"
 import { Global } from "@opencode-ai/core/global"
 import { Info } from "@opencode-ai/schema/file-diff"
+import os from "os"
 
 export const Patch = Schema.Struct({
   hash: Schema.String,
@@ -166,6 +167,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
 
         const enabled = Effect.fnUntraced(function* () {
           if (state.vcs !== "git") return false
+          if (path.resolve(state.worktree) === path.resolve(os.homedir())) return false
           return (yield* config.get()).snapshot !== false
         })
 
