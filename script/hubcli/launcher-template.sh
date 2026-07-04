@@ -6,8 +6,9 @@ HUBCLI_SRC="__HUBCLI_SRC__"
 HUBCLI_CONFIG="${HOME}/.hubcli"
 HUBCLI_CREDS="${HOME}/.hubcli/credentials.env"
 ORIGINAL_PWD="${PWD}"
-HUBCLI_VERSION="hubcli-v0.1.0-rc.2"
+HUBCLI_VERSION="hubcli-v0.1.0-rc.3"
 HUBCLI_FAST_BIN="${HOME}/.local/bin/hubcli-fast"
+HUBCLI_RUNTIME_BIN="${HOME}/.local/bin/hubcli-runtime"
 
 if [ ! -x "$BUN" ]; then
   echo "hubcli: bun not found at $BUN" >&2
@@ -130,6 +131,11 @@ case "${1:-}" in
     fi
     ;;
 esac
+
+if [ "${HUBCLI_DEV:-0}" != "1" ] && [ -x "$HUBCLI_RUNTIME_BIN" ]; then
+  exec env PWD="$ORIGINAL_PWD" HUBCLI_CALLER_PWD="$ORIGINAL_PWD" HUBCLI_BRAND=1 HUBCLI_VERSION="$HUBCLI_VERSION" \
+    OPENCODE_CONFIG_DIR="$HUBCLI_CONFIG" "$HUBCLI_RUNTIME_BIN" "$@"
+fi
 
 # ---------------------------------------------------------------------------
 # Detect whether the caller passed a positional (non-flag) argument.

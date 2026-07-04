@@ -30,6 +30,7 @@ HUBCLI_CREDS="${HUBCLI_HOME}/credentials.env"
 LAUNCHER_DIR="${HOME}/.local/bin"
 LAUNCHER_PATH="${LAUNCHER_DIR}/hubcli"
 FAST_BIN_PATH="${LAUNCHER_DIR}/hubcli-fast"
+RUNTIME_BIN_PATH="${LAUNCHER_DIR}/hubcli-runtime"
 # Resolver bun: PATH primeiro, depois fallback para ~/.bun/bin/bun
 BUN="$(command -v bun 2>/dev/null || echo "${HOME}/.bun/bin/bun")"
 GIT="git"
@@ -280,7 +281,7 @@ _needs_create=1
 if [ -f "$LAUNCHER_PATH" ]; then
   # Verificar se é do HubCli (contém a assinatura esperada)
   if grep -q "HUBCLI_SRC=" "$LAUNCHER_PATH" 2>/dev/null; then
-    if grep -q "NVIDIA_API_KEY" "$LAUNCHER_PATH" 2>/dev/null && grep -q "HUBCLI_CALLER_PWD" "$LAUNCHER_PATH" 2>/dev/null; then
+    if grep -q "NVIDIA_API_KEY" "$LAUNCHER_PATH" 2>/dev/null && grep -q "HUBCLI_CALLER_PWD" "$LAUNCHER_PATH" 2>/dev/null && grep -q "HUBCLI_RUNTIME_BIN" "$LAUNCHER_PATH" 2>/dev/null && grep -q "hubcli-v0.1.0-rc.3" "$LAUNCHER_PATH" 2>/dev/null; then
       _ok "Launcher existente e atualizado: $LAUNCHER_PATH"
       _needs_create=0
     elif [ "$MODE" = "check" ]; then
@@ -345,6 +346,50 @@ if [ "$MODE" != "check" ]; then
   fi
 fi
 
+if [ "$MODE" != "check" ]; then
+  _head "6c. Runtime binary"
+  _runtime_dir="${HUBCLI_SRC}/packages/opencode"
+  _models_cache="${HOME}/.cache/opencode/models.json"
+  _platform="$(uname -s)"
+  _arch="$(uname -m)"
+  case "$_platform" in
+    Darwin) _build_os="darwin" ;;
+    Linux)  _build_os="linux" ;;
+    *)      _build_os="" ;;
+  esac
+  case "$_arch" in
+    x86_64|amd64) _build_arch="x64" ;;
+    arm64|aarch64) _build_arch="arm64" ;;
+    *) _build_arch="" ;;
+  esac
+
+  if [ -z "$_build_os" ] || [ -z "$_build_arch" ]; then
+    _warn "Plataforma não suportada para build runtime automático: $_platform/$_arch"
+  elif [ "$DRY_RUN" -eq 0 ]; then
+    if [ -f "$_models_cache" ]; then
+      _info "Usando snapshot local models.dev: $_models_cache"
+      MODELS_DEV_API_JSON="$_models_cache" HUBCLI_VERSION="hubcli-v0.1.0-rc.3" "$BUN" run --cwd "$_runtime_dir" script/build.ts --single --skip-install
+    else
+      _warn "Snapshot local models.dev ausente; o build oficial tentará buscar models.dev"
+      HUBCLI_VERSION="hubcli-v0.1.0-rc.3" "$BUN" run --cwd "$_runtime_dir" script/build.ts --single --skip-install
+    fi
+    _built_runtime="${_runtime_dir}/dist/opencode-${_build_os}-${_build_arch}/bin/opencode"
+    if [ ! -x "$_built_runtime" ]; then
+      _fail "Runtime compilado não encontrado: $_built_runtime"
+      exit 1
+    fi
+    mkdir -p "$LAUNCHER_DIR"
+    _tmp_runtime="${RUNTIME_BIN_PATH}.tmp.${TIMESTAMP}"
+    cp "$_built_runtime" "$_tmp_runtime"
+    chmod 755 "$_tmp_runtime"
+    mv "$_tmp_runtime" "$RUNTIME_BIN_PATH"
+    _ok "Runtime binary criado: $RUNTIME_BIN_PATH (755)"
+  else
+    _info "(--dry-run) Construiria runtime com build oficial em: $_runtime_dir"
+    _info "(--dry-run) Instalaria: $RUNTIME_BIN_PATH"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 7. PATH check
 # ---------------------------------------------------------------------------
@@ -367,6 +412,7 @@ _fails=0
 [ -f "$LAUNCHER_PATH" ]   && _ok "Launcher presente"   || { _fail "Launcher ausente"; _fails=$((_fails+1)); }
 [ -x "$LAUNCHER_PATH" ]   && _ok "Launcher executável" || { _fail "Launcher não executável"; _fails=$((_fails+1)); }
 [ -x "$FAST_BIN_PATH" ]   && _ok "Fast path presente"  || { _warn "Fast path ausente: $FAST_BIN_PATH"; }
+[ -x "$RUNTIME_BIN_PATH" ] && _ok "Runtime presente"   || { _warn "Runtime ausente: $RUNTIME_BIN_PATH"; }
 [ -f "$HUBCLI_CONFIG" ]   && _ok "Config presente"     || { _warn "Config ausente: $HUBCLI_CONFIG"; }
 [ -f "$HUBCLI_CREDS" ]    && _ok "Credentials presente" || { _warn "Credentials ausente: $HUBCLI_CREDS"; }
 [ -d "$HUBCLI_SRC/.git" ] && _ok "Repositório presente" || { _fail "Repositório ausente"; _fails=$((_fails+1)); }

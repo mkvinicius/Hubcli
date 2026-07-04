@@ -10,7 +10,7 @@ const HUBCLI_HOME = path.join(HOME, ".hubcli")
 const PROFILES_PATH = path.join(HUBCLI_HOME, "profiles.json")
 const CREDS_PATH = path.join(HUBCLI_HOME, "credentials.env")
 const OPENCODE_AUTH = path.join(HOME, ".local", "share", "opencode", "auth.json")
-const VERSION = process.env.HUBCLI_VERSION || "hubcli-v0.1.0-rc.2"
+const VERSION = process.env.HUBCLI_VERSION || "hubcli-v0.1.0-rc.3"
 const PROFILE_SCHEMA_VERSION = 1
 
 interface ProfilesFile {
