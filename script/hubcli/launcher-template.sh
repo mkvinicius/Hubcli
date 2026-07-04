@@ -6,6 +6,8 @@ HUBCLI_SRC="__HUBCLI_SRC__"
 HUBCLI_CONFIG="${HOME}/.hubcli"
 HUBCLI_CREDS="${HOME}/.hubcli/credentials.env"
 ORIGINAL_PWD="${PWD}"
+HUBCLI_VERSION="hubcli-v0.1.0-rc.2"
+HUBCLI_FAST_BIN="${HOME}/.local/bin/hubcli-fast"
 
 if [ ! -x "$BUN" ]; then
   echo "hubcli: bun not found at $BUN" >&2
@@ -16,6 +18,42 @@ if [ ! -d "$HUBCLI_SRC" ]; then
   echo "hubcli: source not found at $HUBCLI_SRC" >&2
   exit 1
 fi
+
+HUBCLI_FAST_ENTRY="${HUBCLI_SRC}/src/cli/hubcli/fast.ts"
+
+run_hubcli_fast() {
+  if [ -x "$HUBCLI_FAST_BIN" ]; then
+    exec env PWD="$ORIGINAL_PWD" HUBCLI_CALLER_PWD="$ORIGINAL_PWD" HUBCLI_BRAND=1 HUBCLI_VERSION="$HUBCLI_VERSION" \
+      OPENCODE_CONFIG_DIR="$HUBCLI_CONFIG" "$HUBCLI_FAST_BIN" "$@"
+  fi
+  if [ -f "$HUBCLI_FAST_ENTRY" ]; then
+    exec env PWD="$ORIGINAL_PWD" HUBCLI_CALLER_PWD="$ORIGINAL_PWD" HUBCLI_BRAND=1 HUBCLI_VERSION="$HUBCLI_VERSION" \
+      OPENCODE_CONFIG_DIR="$HUBCLI_CONFIG" "$BUN" --conditions=browser "$HUBCLI_FAST_ENTRY" "$@"
+  fi
+}
+
+case "${1:-}" in
+  --version|-v|--help|-h)
+    if [ "$#" -eq 1 ] && [ "${1:-}" = "--version" ]; then
+      printf '%s\n' "$HUBCLI_VERSION"
+      exit 0
+    fi
+    if [ "$#" -eq 1 ] && [ "${1:-}" = "-v" ]; then
+      printf '%s\n' "$HUBCLI_VERSION"
+      exit 0
+    fi
+    if [ "$#" -eq 1 ]; then
+      run_hubcli_fast "$@"
+    fi
+    ;;
+  profile)
+    case "${2:-}" in
+      current|list|show)
+        run_hubcli_fast "$@"
+        ;;
+    esac
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Secure credential loader — no eval, no source, whitelist-only parser.
@@ -77,6 +115,21 @@ if [ -f "$HUBCLI_CREDS" ]; then
 
   unset _creds_perms _creds_line _creds_name _creds_val _creds_dashscope _creds_deepseek _creds_nvidia
 fi
+
+case "${1:-}" in
+  auth)
+    case "${2:-}" in
+      status|providers)
+        run_hubcli_fast "$@"
+        ;;
+    esac
+    ;;
+  route)
+    if [ "${2:-}" = "explain" ]; then
+      run_hubcli_fast "$@"
+    fi
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Detect whether the caller passed a positional (non-flag) argument.

@@ -29,6 +29,7 @@ HUBCLI_CONFIG="${HUBCLI_HOME}/opencode.json"
 HUBCLI_CREDS="${HUBCLI_HOME}/credentials.env"
 LAUNCHER_DIR="${HOME}/.local/bin"
 LAUNCHER_PATH="${LAUNCHER_DIR}/hubcli"
+FAST_BIN_PATH="${LAUNCHER_DIR}/hubcli-fast"
 # Resolver bun: PATH primeiro, depois fallback para ~/.bun/bin/bun
 BUN="$(command -v bun 2>/dev/null || echo "${HOME}/.bun/bin/bun")"
 GIT="git"
@@ -327,6 +328,23 @@ if [ "$_needs_create" -eq 1 ] && [ "$MODE" != "check" ]; then
   fi
 fi
 
+if [ "$MODE" != "check" ]; then
+  _head "6b. Fast path binary"
+  _fast_entry="${HUBCLI_SRC}/packages/opencode/src/cli/hubcli/fast.ts"
+  if [ ! -f "$_fast_entry" ]; then
+    _warn "Fast path source not found: $_fast_entry"
+  elif [ "$DRY_RUN" -eq 0 ]; then
+    mkdir -p "$LAUNCHER_DIR"
+    _tmp_fast="${FAST_BIN_PATH}.tmp.${TIMESTAMP}"
+    "$BUN" build --compile --minify --conditions=browser --outfile "$_tmp_fast" "$_fast_entry" >/dev/null
+    chmod 755 "$_tmp_fast"
+    mv "$_tmp_fast" "$FAST_BIN_PATH"
+    _ok "Fast path binary criado: $FAST_BIN_PATH (755)"
+  else
+    _info "(--dry-run) Construiria: $FAST_BIN_PATH"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 7. PATH check
 # ---------------------------------------------------------------------------
@@ -348,6 +366,7 @@ _head "8. Verificação"
 _fails=0
 [ -f "$LAUNCHER_PATH" ]   && _ok "Launcher presente"   || { _fail "Launcher ausente"; _fails=$((_fails+1)); }
 [ -x "$LAUNCHER_PATH" ]   && _ok "Launcher executável" || { _fail "Launcher não executável"; _fails=$((_fails+1)); }
+[ -x "$FAST_BIN_PATH" ]   && _ok "Fast path presente"  || { _warn "Fast path ausente: $FAST_BIN_PATH"; }
 [ -f "$HUBCLI_CONFIG" ]   && _ok "Config presente"     || { _warn "Config ausente: $HUBCLI_CONFIG"; }
 [ -f "$HUBCLI_CREDS" ]    && _ok "Credentials presente" || { _warn "Credentials ausente: $HUBCLI_CREDS"; }
 [ -d "$HUBCLI_SRC/.git" ] && _ok "Repositório presente" || { _fail "Repositório ausente"; _fails=$((_fails+1)); }
