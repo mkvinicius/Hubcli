@@ -94,6 +94,15 @@ else
   HUBCLI_SRC="${HOME}/Hubcli"
 fi
 
+# Fonte única de versão: script/hubcli/resolve-version.sh do repositório alvo
+# (tag git exata em HEAD > arquivo VERSION > "local"). Nunca hardcoded aqui.
+_resolve_version_script="${HUBCLI_SRC}/script/hubcli/resolve-version.sh"
+if [ -f "$_resolve_version_script" ]; then
+  HUBCLI_VERSION="$(bash "$_resolve_version_script")"
+else
+  HUBCLI_VERSION="local"
+fi
+
 # ---------------------------------------------------------------------------
 # 1. Verificar pré-requisitos
 # ---------------------------------------------------------------------------
@@ -281,11 +290,11 @@ _needs_create=1
 if [ -f "$LAUNCHER_PATH" ]; then
   # Verificar se é do HubCli (contém a assinatura esperada)
   if grep -q "HUBCLI_SRC=" "$LAUNCHER_PATH" 2>/dev/null; then
-    if grep -q "NVIDIA_API_KEY" "$LAUNCHER_PATH" 2>/dev/null && grep -q "HUBCLI_CALLER_PWD" "$LAUNCHER_PATH" 2>/dev/null && grep -q "HUBCLI_RUNTIME_BIN" "$LAUNCHER_PATH" 2>/dev/null && grep -q "hubcli-v0.1.0-rc.3" "$LAUNCHER_PATH" 2>/dev/null; then
-      _ok "Launcher existente e atualizado: $LAUNCHER_PATH"
+    if grep -q "NVIDIA_API_KEY" "$LAUNCHER_PATH" 2>/dev/null && grep -q "HUBCLI_CALLER_PWD" "$LAUNCHER_PATH" 2>/dev/null && grep -q "HUBCLI_RUNTIME_BIN" "$LAUNCHER_PATH" 2>/dev/null && grep -q "HUBCLI_VERSION=\"${HUBCLI_VERSION}\"" "$LAUNCHER_PATH" 2>/dev/null; then
+      _ok "Launcher existente e atualizado: $LAUNCHER_PATH ($HUBCLI_VERSION)"
       _needs_create=0
     elif [ "$MODE" = "check" ]; then
-      _warn "Launcher existente mas DESATUALIZADO (sem NVIDIA/MCP). Rode: setup.sh --repair"
+      _warn "Launcher existente mas DESATUALIZADO (versão ou recursos diferentes). Rode: setup.sh --repair"
       _needs_create=0
     else
       _warn "Launcher desatualizado — criando backup e atualizando..."
@@ -314,13 +323,18 @@ if [ "$_needs_create" -eq 1 ] && [ "$MODE" != "check" ]; then
 
     # Instalar o launcher a partir do template canônico do repositório.
     # O template é a fonte única de verdade (script/hubcli/launcher-template.sh);
-    # __HUBCLI_SRC__ é substituído pelo caminho real de packages/opencode.
+    # __HUBCLI_SRC__ é substituído pelo caminho real de packages/opencode,
+    # __HUBCLI_VERSION__ pela versão resolvida via resolve-version.sh.
     _template="${HUBCLI_SRC}/script/hubcli/launcher-template.sh"
     if [ ! -f "$_template" ]; then
       _fail "Template do launcher não encontrado: $_template"
       exit 1
     fi
-    sed "s|__HUBCLI_SRC__|${HUBCLI_SRC}/packages/opencode|" "$_template" > "$LAUNCHER_PATH"
+    _tmp_launcher="${LAUNCHER_PATH}.tmp.${TIMESTAMP}"
+    sed -e "s|__HUBCLI_SRC__|${HUBCLI_SRC}/packages/opencode|" \
+        -e "s|__HUBCLI_VERSION__|${HUBCLI_VERSION}|" \
+        "$_template" > "$_tmp_launcher"
+    mv "$_tmp_launcher" "$LAUNCHER_PATH"
 
     chmod 755 "$LAUNCHER_PATH"
     _ok "Launcher criado: $LAUNCHER_PATH (755)"
@@ -368,10 +382,10 @@ if [ "$MODE" != "check" ]; then
   elif [ "$DRY_RUN" -eq 0 ]; then
     if [ -f "$_models_cache" ]; then
       _info "Usando snapshot local models.dev: $_models_cache"
-      MODELS_DEV_API_JSON="$_models_cache" HUBCLI_VERSION="hubcli-v0.1.0-rc.3" "$BUN" run --cwd "$_runtime_dir" script/build.ts --single --skip-install
+      MODELS_DEV_API_JSON="$_models_cache" HUBCLI_VERSION="$HUBCLI_VERSION" "$BUN" run --cwd "$_runtime_dir" script/build.ts --single --skip-install
     else
       _warn "Snapshot local models.dev ausente; o build oficial tentará buscar models.dev"
-      HUBCLI_VERSION="hubcli-v0.1.0-rc.3" "$BUN" run --cwd "$_runtime_dir" script/build.ts --single --skip-install
+      HUBCLI_VERSION="$HUBCLI_VERSION" "$BUN" run --cwd "$_runtime_dir" script/build.ts --single --skip-install
     fi
     _built_runtime="${_runtime_dir}/dist/opencode-${_build_os}-${_build_arch}/bin/opencode"
     if [ ! -x "$_built_runtime" ]; then

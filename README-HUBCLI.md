@@ -84,6 +84,40 @@ hubcli maintenance sync     # merge --no-ff assistido (nunca rebase, nunca stash
 
 Detalhes: [docs/hubcli-maintenance.md](docs/hubcli-maintenance.md).
 
+## Runtime compilado e modo dev
+
+`setup.sh` compila e instala três binários em `~/.local/bin/`:
+
+| Binário | Origem | Uso |
+|---|---|---|
+| `hubcli` | `script/hubcli/launcher-template.sh` | launcher — sempre o ponto de entrada |
+| `hubcli-fast` | `bun build --compile` de `fast.ts` | atalho instantâneo p/ `--version`, `--help`, `profile`, `auth`, `route explain` |
+| `hubcli-runtime` | `bun run script/build.ts --single` (mecanismo oficial do OpenCode) | binário completo (TUI, run, doctor, etc.) |
+
+O launcher prefere `hubcli-runtime` por padrão (muito mais rápido que iniciar via `bun run` a partir do source). Para forçar execução a partir do código-fonte — por exemplo depois de editar `src/`, antes de reinstalar — use `HUBCLI_DEV=1`:
+
+```bash
+HUBCLI_DEV=1 hubcli doctor     # roda a partir do source, ignora hubcli-runtime
+```
+
+Depois de alterar código em `packages/opencode/src/`, reconstrua os binários instalados com:
+
+```bash
+bash ~/Hubcli/script/hubcli/setup.sh --repair
+```
+
+`--repair` só recria launcher/fast/runtime — nunca toca em `~/.hubcli/opencode.json` ou `~/.hubcli/credentials.env`.
+
+### Versionamento
+
+Fonte única de verdade, resolvida por `script/hubcli/resolve-version.sh` (nunca hardcoded em mais de um lugar):
+
+1. tag git exata em `HEAD` no formato `hubcli-v*` (o release real);
+2. arquivo `script/hubcli/VERSION` (a "próxima" versão, antes da tag existir);
+3. fallback `local`.
+
+`hubcli --version` (instalado) mostra a versão resolvida; `HUBCLI_DEV=1 hubcli --version` mostra `local` (modo dev nunca usa o binário compilado, então nunca herda a versão de release).
+
 ## Segurança
 
 Chaves só em `~/.hubcli/credentials.env` (600) ou no auth nativo do OpenCode; parser whitelist sem `source`/`eval`; nenhum comando imprime valores de credenciais; MCP server sem shell e sem escrita. Detalhes: [docs/hubcli-security.md](docs/hubcli-security.md).
@@ -97,6 +131,7 @@ bash ~/Hubcli/script/hubcli/uninstall.sh   # remove só o launcher; dados preser
 ## Limitações conhecidas
 
 - Alibaba Token Plan indisponível (entitlement) — Qwen/GLM listados mas degradados.
+- NVIDIA NIM é opcional/advisory no `doctor` — instabilidade intermitente do lado do provider (HTTP 500/vazio) já observada para MiniMax M3; nunca declarado estável, nunca bloqueia o exit code.
 - Fallback automático é de seleção, não de runtime: se o modelo escolhido falhar no meio da sessão, não há retry automático.
 - Fable 5 é experimental (latência 13–47s) e nunca obrigatório.
 - `deepseek-ai/deepseek-v4-pro` via NVIDIA é lento (~2min); prefira `deepseek/deepseek-v4-pro` direto.

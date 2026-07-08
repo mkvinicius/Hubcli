@@ -10,7 +10,11 @@ const HUBCLI_HOME = path.join(HOME, ".hubcli")
 const PROFILES_PATH = path.join(HUBCLI_HOME, "profiles.json")
 const CREDS_PATH = path.join(HUBCLI_HOME, "credentials.env")
 const OPENCODE_AUTH = path.join(HOME, ".local", "share", "opencode", "auth.json")
-const VERSION = process.env.HUBCLI_VERSION || "hubcli-v0.1.0-rc.3"
+// HUBCLI_VERSION is always injected by the launcher (installed or dev mode).
+// This fallback only fires when fast.ts is invoked directly, bypassing the
+// launcher — treat that as an unversioned dev invocation, same as
+// InstallationVersion falling back to "local" in source mode.
+const VERSION = process.env.HUBCLI_VERSION || "local"
 const PROFILE_SCHEMA_VERSION = 1
 
 interface ProfilesFile {

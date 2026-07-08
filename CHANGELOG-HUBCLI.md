@@ -2,6 +2,33 @@
 
 Registro das mudanças do fork sobre o OpenCode. Formato reverso-cronológico.
 
+## v0.1.0-rc.4 (2026-07-08, pendente de tag/commit)
+
+Runtime compilado e versionamento single-source.
+
+### Recursos
+
+- **Runtime compilado instalado**: `setup.sh` agora compila e instala `hubcli-fast` (atalho para `--version`/`--help`/`profile`/`auth`/`route explain`) e `hubcli-runtime` (binário completo via mecanismo oficial de build do OpenCode). O launcher prefere o binário compilado por padrão; `HUBCLI_DEV=1` força execução a partir do source.
+- **Fonte única de versão**: `script/hubcli/resolve-version.sh` resolve a versão por tag git exata em `HEAD` (`hubcli-v*`) → arquivo `script/hubcli/VERSION` → fallback `local`. Nada mais tem a versão hardcoded — launcher, fast bin e runtime compilado sempre mostram o mesmo valor. `HUBCLI_DEV=1 hubcli --version` agora corretamente mostra `local` (antes exibia a versão de release mesmo em modo dev).
+- **Instalação atômica**: geração do launcher passou a usar arquivo temporário + `mv` (mesmo padrão já usado pelo fast bin e runtime bin).
+
+### Testes
+
+- `packages/opencode/test/cli/hubcli/version.test.ts` (novo): resolução de versão (tag > VERSION file > local), sem drift entre o arquivo VERSION do repo e o resolver, substituição de placeholders no template do launcher, comportamento `HUBCLI_DEV=1`, fallback de `fast.ts`.
+
+### Validação manual desta RC
+
+- Instalação limpa em `HOME` temporário (setup completo + segunda execução idempotente, sem tocar nada real do usuário).
+- `hubcli --version` → `hubcli-v0.1.0-rc.4` (instalado); `HUBCLI_DEV=1 hubcli --version` → `local`.
+- `hubcli run --model opencode/gpt-5.2-codex` e `--model deepseek/deepseek-v4-pro` → OK.
+- `hubcli doctor` / `doctor --mcp` → exit 0, 6 tools MCP OK.
+- Benchmark: modo instalado nitidamente mais rápido que `HUBCLI_DEV=1` (ex.: `--version` ~73ms vs ~4.3s; `doctor` ~1.7s vs ~2.9s).
+
+### Problemas conhecidos (mantidos)
+
+- NVIDIA NIM segue opcional/advisory — instabilidade intermitente do provider para MiniMax M3 (HTTP 500/vazio), nunca declarado estável.
+- Alibaba Token Plan segue degradado (`AccessDenied.Unpurchased`).
+
 ## v0.1.0-rc.1 (2026-07-02)
 
 Primeiro release candidate do MVP.

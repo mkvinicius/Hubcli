@@ -6,7 +6,7 @@ HUBCLI_SRC="__HUBCLI_SRC__"
 HUBCLI_CONFIG="${HOME}/.hubcli"
 HUBCLI_CREDS="${HOME}/.hubcli/credentials.env"
 ORIGINAL_PWD="${PWD}"
-HUBCLI_VERSION="hubcli-v0.1.0-rc.3"
+HUBCLI_VERSION="__HUBCLI_VERSION__"
 HUBCLI_FAST_BIN="${HOME}/.local/bin/hubcli-fast"
 HUBCLI_RUNTIME_BIN="${HOME}/.local/bin/hubcli-runtime"
 
@@ -35,15 +35,19 @@ run_hubcli_fast() {
 
 case "${1:-}" in
   --version|-v|--help|-h)
-    if [ "$#" -eq 1 ] && [ "${1:-}" = "--version" ]; then
+    # HUBCLI_DEV=1 always runs from source (never the compiled runtime), so
+    # skip this instant fast-path and let execution fall through to the
+    # source-mode invocation below, where InstallationVersion resolves to
+    # "local" (no OPENCODE_VERSION build-time define exists in source mode).
+    if [ "${HUBCLI_DEV:-0}" != "1" ] && [ "$#" -eq 1 ] && [ "${1:-}" = "--version" ]; then
       printf '%s\n' "$HUBCLI_VERSION"
       exit 0
     fi
-    if [ "$#" -eq 1 ] && [ "${1:-}" = "-v" ]; then
+    if [ "${HUBCLI_DEV:-0}" != "1" ] && [ "$#" -eq 1 ] && [ "${1:-}" = "-v" ]; then
       printf '%s\n' "$HUBCLI_VERSION"
       exit 0
     fi
-    if [ "$#" -eq 1 ]; then
+    if [ "${HUBCLI_DEV:-0}" != "1" ] && [ "$#" -eq 1 ]; then
       run_hubcli_fast "$@"
     fi
     ;;
