@@ -1,0 +1,147 @@
+# HubCli release — builds and publishes multiplatform archives to a GitHub
+# Release when a hubcli-v* tag is pushed. Separate from OpenCode's own
+# publish.yml/release-github-action.yml so upstream syncs never collide on
+# filename.
+#
+# AUTHORED IN THIS SESSION, NOT YET RUN — no CI access was available to
+# validate it end-to-end. Review carefully (especially the packaging steps,
+# which reuse script/hubcli/release/*.sh already validated locally on
+# darwin-x64 this session) before trusting it for a real release.
+#
+# linux-arm64 is cross-compiled from the ubuntu-latest (x64) runner — GitHub
+# does not offer a free-tier native arm64 Linux runner, so that artifact is
+# built but never smoke-tested on real arm64 hardware in this workflow.
+name: hubcli-release
+
+on:
+  push:
+    tags:
+      - "hubcli-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hubcli-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install
+      - run: bun run --filter opencode typecheck
+      - run: bun run --filter @opencode-ai/tui typecheck
+      - working-directory: packages/opencode
+        run: bun test test/cli/cmd/doctor.test.ts test/cli/hubcli/ --timeout 60000
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-x64
+            runner: macos-13
+            smoke: true
+          - target: darwin-arm64
+            runner: macos-14
+            smoke: true
+          - target: linux-x64
+            runner: ubuntu-latest
+            smoke: true
+          - target: linux-arm64
+            runner: ubuntu-latest
+            smoke: false   # cross-compiled; no native arm64 Linux runner available
+          - target: windows-x64
+            runner: windows-latest
+            smoke: true
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install
+
+      - name: build ${{ matrix.target }}
+        shell: bash
+        run: bash script/hubcli/release/build-platform.sh ${{ matrix.target }}
+
+      - name: smoke test (native targets only)
+        if: matrix.smoke == true && runner.os != 'Windows'
+        shell: bash
+        run: packages/opencode/dist/opencode-${{ matrix.target }}/bin/hubcli-runtime --version
+
+      - name: smoke test (windows)
+        if: matrix.smoke == true && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "packages/opencode/dist/opencode-${{ matrix.target }}/bin/hubcli-runtime.exe" --version
+
+      - name: package ${{ matrix.target }}
+        shell: bash
+        run: bash script/hubcli/release/package-platform.sh ${{ matrix.target }} dist-release
+
+      - name: verify no personal paths leaked into the binary
+        shell: bash
+        # CI runner paths are generic (/home/runner, /Users/runner,
+        # D:\a\...) by construction — this only guards against accidental
+        # absolute paths from a contributor's machine leaking through env
+        # vars or config during the build.
+        run: |
+          BIN=$(find packages/opencode/dist -type f \( -name hubcli-runtime -o -name hubcli-runtime.exe \))
+          if command -v strings >/dev/null 2>&1; then
+            ! strings "$BIN" | grep -qE "/Users/[a-z]+/(Hubcli|Documents|Desktop)" || (echo "personal path leaked into $BIN" && exit 1)
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hubcli-release-${{ matrix.target }}
+          path: dist-release/*
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hubcli-release-*
+          path: dist-release
+          merge-multiple: true
+
+      - name: generate checksums
+        run: |
+          cp install.sh install.ps1 dist-release/
+          bash script/hubcli/release/generate-checksums.sh dist-release
+
+      - name: determine prerelease flag
+        id: prerelease
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$TAG" == *-rc* || "$TAG" == *-beta* || "$TAG" == *-alpha* ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          prerelease: ${{ steps.prerelease.outputs.value }}
+          generate_release_notes: true
+          files: |
+            dist-release/*.tar.gz
+            dist-release/*.zip
+            dist-release/checksums-sha256.txt
+            dist-release/install.sh
+            dist-release/install.ps1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

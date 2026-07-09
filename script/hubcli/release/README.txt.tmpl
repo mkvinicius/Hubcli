@@ -1,0 +1,39 @@
+HubCli __HUBCLI_VERSION__ (__HUBCLI_TARGET__)
+================================================
+
+HubCli is a branded fork of OpenCode (MIT licensed, see LICENSE). It is not
+an official product of OpenCode, OpenAI, Anthropic, or NVIDIA.
+
+Install
+-------
+Unix (macOS/Linux):
+  1. Copy this whole directory somewhere permanent, or run install.sh.
+  2. Add the directory to your PATH, or symlink ./hubcli into a PATH dir.
+
+Windows:
+  1. Copy this whole directory somewhere permanent, or run install.ps1.
+  2. Add the directory to your PATH (install.ps1 offers to do this).
+  3. Run via hubcli.cmd (or hubcli.ps1 directly from PowerShell).
+
+First use
+---------
+  hubcli --version
+  hubcli --help
+  hubcli doctor           # missing providers show as WARN/SKIP, never a crash
+  hubcli auth status      # shows which credentials are present (never values)
+
+No provider is required to start HubCli. To add credentials, edit:
+  ~/.hubcli/credentials.env        (Unix)
+  %USERPROFILE%\.hubcli\credentials.env  (Windows)
+
+Never pass API keys as command-line arguments.
+
+Uninstall
+---------
+Unix:    bash install.sh --uninstall
+Windows: powershell -File install.ps1 -Uninstall
+
+Uninstalling never deletes ~/.hubcli (config, credentials, profiles) unless
+you explicitly confirm data removal.
+
+More info: https://github.com/mkvinicius/Hubcli

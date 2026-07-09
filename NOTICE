@@ -1,0 +1,30 @@
+HubCli
+======
+
+HubCli is a fork of OpenCode (https://github.com/anomalyco/opencode),
+licensed under the MIT License. The original OpenCode copyright and license
+text is preserved unmodified in LICENSE.
+
+HubCli is an independent, community-maintained fork. It adds model
+curation, diagnostics (`hubcli doctor`), fork-maintenance tooling
+(`hubcli maintenance`), routing profiles, and a read-only MCP server on top
+of the unmodified OpenCode core. All HubCli-specific behavior is inactive
+unless the HUBCLI_BRAND environment variable is set — without it, this
+software behaves as unmodified OpenCode.
+
+HubCli is not affiliated with, endorsed by, or an official product of:
+  - the OpenCode project or its maintainers,
+  - OpenAI,
+  - Anthropic,
+  - NVIDIA,
+  - Alibaba Cloud / DashScope,
+  - DeepSeek,
+  - or any other model provider it integrates with.
+
+Product and provider names referenced (GPT, Claude, Kimi, MiniMax, Qwen,
+GLM, DeepSeek, etc.) are used solely to identify the models HubCli can
+route to via each provider's own API, under the user's own credentials.
+No trademark rights are claimed.
+
+This is not legal advice. Consult counsel before redistributing HubCli
+commercially or under a different license.

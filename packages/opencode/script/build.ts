@@ -24,6 +24,11 @@ const sourcemapsFlag = process.argv.includes("--sourcemaps")
 const plugin = createSolidTransformPlugin()
 const skipEmbedWebUi = process.argv.includes("--skip-embed-web-ui")
 const buildVersion = process.env.HUBCLI_VERSION || Script.version
+// --target=<os>-<arch> cross-compiles the default (non-baseline, glibc) variant
+// for one specific platform, without needing the full --single (current
+// platform only) or the unfiltered all-targets matrix. "windows" is accepted
+// as an alias for Bun/Node's "win32" os identifier.
+const targetFlag = process.argv.find((arg) => arg.startsWith("--target="))?.slice("--target=".length)
 
 const createEmbeddedWebUIBundle = async () => {
   console.log(`Building Web UI to embed in the binary`)
@@ -133,7 +138,18 @@ const targets = singleFlag
 
       return true
     })
-  : allTargets
+  : targetFlag
+    ? allTargets.filter((item) => {
+        const wantOs = targetFlag.split("-")[0] === "windows" ? "win32" : targetFlag.split("-")[0]
+        const wantArch = targetFlag.split("-")[1]
+        return item.os === wantOs && item.arch === wantArch && item.avx2 !== false && item.abi === undefined
+      })
+    : allTargets
+
+if (targetFlag && targets.length === 0) {
+  console.error(`No matching build target for --target=${targetFlag}. Expected <os>-<arch>, e.g. darwin-arm64, linux-x64, windows-x64.`)
+  process.exit(1)
+}
 
 await $`rm -rf dist`
 

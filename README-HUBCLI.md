@@ -15,6 +15,27 @@ HubCli é um fork do [OpenCode](https://github.com/anomalyco/opencode) com curad
 
 ## Instalação
 
+**Sem precisar de Git nem Bun** (macOS/Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/main/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://github.com/mkvinicius/Hubcli/releases/latest/download/install.ps1 | iex
+```
+
+Alternativa mais segura — baixar, inspecionar e só então rodar — e detalhes de plataformas suportadas: [docs/INSTALL.md](docs/INSTALL.md).
+
+> Nota: enquanto não há uma release publicada no GitHub, os comandos acima
+> ainda não funcionam de ponta a ponta — os artefatos e o `install.sh`/`install.ps1`
+> já foram construídos e testados localmente (ver `CHANGELOG-HUBCLI.md`), mas
+> a publicação da release em si é uma ação humana pendente.
+
+**Instalação de desenvolvedor** (clona o repositório, para quem vai contribuir com o fork):
+
 ```bash
 git clone https://github.com/mkvinicius/Hubcli ~/Hubcli
 cd ~/Hubcli && bun install

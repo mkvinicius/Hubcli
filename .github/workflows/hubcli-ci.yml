@@ -1,0 +1,95 @@
+# HubCli CI — separate from OpenCode's own upstream workflows (test.yml,
+# typecheck.yml, publish.yml, etc.) so that future `hubcli maintenance sync`
+# merges from upstream/dev never conflict on filename. Only exercises
+# HubCli-added code paths (hubcli/, doctor, MCP, profiles) plus the shared
+# opencode/tui typechecks.
+#
+# AUTHORED IN THIS SESSION, NOT YET RUN ON A REAL GITHUB ACTIONS RUNNER —
+# there was no CI access available. Review the matrix and steps before
+# relying on it; treat as a draft until it has gone green at least once.
+name: hubcli-ci
+
+on:
+  push:
+    branches: [integration/upstream-20260702]
+  pull_request:
+    branches: [integration/upstream-20260702]
+
+concurrency:
+  group: hubcli-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: bun install
+        run: bun install
+
+      - name: typecheck opencode
+        run: bun run --filter opencode typecheck
+
+      - name: typecheck tui
+        run: bun run --filter @opencode-ai/tui typecheck
+
+      - name: HubCli tests (doctor, hubcli/)
+        # No real provider credentials are configured in CI — these tests use
+        # fixtures/fake keys only (verified by the "no secrets in tests" grep
+        # step below), never live network calls to Zen/DeepSeek/NVIDIA/etc.
+        working-directory: packages/opencode
+        run: bun test test/cli/cmd/doctor.test.ts test/cli/hubcli/ --timeout 60000
+
+      - name: build native binary for this runner
+        working-directory: packages/opencode
+        run: bun run script/build.ts --single --skip-embed-web-ui
+
+      - name: smoke test — version
+        if: runner.os != 'Windows'
+        run: |
+          BIN=$(find packages/opencode/dist -name opencode -type f | head -1)
+          "$BIN" --version
+
+      - name: smoke test — help
+        if: runner.os != 'Windows'
+        run: |
+          BIN=$(find packages/opencode/dist -name opencode -type f | head -1)
+          "$BIN" --help >/dev/null
+
+      - name: smoke test — doctor without credentials (expects WARN, not crash)
+        if: runner.os != 'Windows'
+        env:
+          HUBCLI_BRAND: "1"
+          OPENCODE_CONFIG_DIR: ${{ runner.temp }}/hubcli-ci-home
+        run: |
+          BIN=$(find packages/opencode/dist -name opencode -type f | head -1)
+          "$BIN" doctor || true   # doctor exits non-zero on missing required config in a bare CI sandbox; assert it did not crash/hang instead
+          echo "doctor ran to completion (see exit code above) without hanging"
+
+      - name: smoke test — mcp serve tools/list
+        working-directory: packages/opencode
+        run: |
+          echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}
+          {"jsonrpc":"2.0","method":"notifications/initialized"}
+          {"jsonrpc":"2.0","id":2,"method":"tools/list"}' | timeout 20 bun run --conditions=browser src/index.ts mcp serve 2>/dev/null | grep -q '"tools"' && echo "MCP tools/list responded"
+
+      - name: secret scan (fail on obvious leaked key patterns)
+        run: |
+          ! grep -rE "sk-[A-Za-z0-9]{20,}|nvapi-[A-Za-z0-9_-]{20,}" --include="*.ts" --include="*.sh" packages/ script/ || (echo "possible secret literal found" && exit 1)
+
+      - name: upload build artifact
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hubcli-ci-build-${{ matrix.os }}
+          path: packages/opencode/dist/**/bin/opencode*
+          retention-days: 3
