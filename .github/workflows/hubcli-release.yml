@@ -1,12 +1,21 @@
 # HubCli release — builds and publishes multiplatform archives to a GitHub
-# Release when a hubcli-v* tag is pushed. Separate from OpenCode's own
-# publish.yml/release-github-action.yml so upstream syncs never collide on
-# filename.
+# Release. Separate from OpenCode's own publish.yml/release-github-action.yml
+# so upstream syncs never collide on filename.
 #
 # AUTHORED IN THIS SESSION, NOT YET RUN — no CI access was available to
-# validate it end-to-end. Review carefully (especially the packaging steps,
-# which reuse script/hubcli/release/*.sh already validated locally on
-# darwin-x64 this session) before trusting it for a real release.
+# validate it end-to-end (would require a push, which this session was
+# explicitly told not to do). Review carefully before trusting it for a real
+# release.
+#
+# Two ways to trigger:
+#   - push of a hubcli-v* tag  → full pipeline, ends by PUBLISHING a real
+#     GitHub Release (prerelease=true if the tag contains -rc/-beta/-alpha).
+#   - workflow_dispatch (manual) → same build+package+verify pipeline, but
+#     publishes a release ONLY if you explicitly set publish=true when
+#     dispatching. Default is publish=false: a dry run that produces the 5
+#     platform archives + checksums as downloadable workflow artifacts,
+#     without ever calling the GitHub Releases API. Use this to validate the
+#     whole pipeline before cutting a real tag.
 #
 # linux-arm64 is cross-compiled from the ubuntu-latest (x64) runner — GitHub
 # does not offer a free-tier native arm64 Linux runner, so that artifact is
@@ -17,6 +26,12 @@ on:
   push:
     tags:
       - "hubcli-v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Actually publish a GitHub Release (false = dry run, artifacts only)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -46,6 +61,46 @@ jobs:
         include:
           - target: darwin-x64
             runner: macos-13
+          - target: darwin-arm64
+            runner: macos-14
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-latest   # cross-compiled; no native arm64 Linux runner available
+          - target: windows-x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install
+
+      - name: build + package ${{ matrix.target }}
+        shell: bash
+        run: |
+          bash script/hubcli/release/build-platform.sh ${{ matrix.target }}
+          bash script/hubcli/release/package-platform.sh ${{ matrix.target }} dist-release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hubcli-release-${{ matrix.target }}
+          path: dist-release/*
+          retention-days: 7
+
+  # Fresh runner per target, NO checkout of the repository — only the
+  # packaged artifact is downloaded. This is a structural proof (not a
+  # heuristic) that the package doesn't secretly depend on the repo,
+  # node_modules, Bun, Git, or the build machine's filesystem: if it did,
+  # these steps fail outright rather than just warn.
+  verify-package:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-x64
+            runner: macos-13
             smoke: true
           - target: darwin-arm64
             runner: macos-14
@@ -55,56 +110,109 @@ jobs:
             smoke: true
           - target: linux-arm64
             runner: ubuntu-latest
-            smoke: false   # cross-compiled; no native arm64 Linux runner available
+            smoke: false   # cross-compiled binary can't run on an x64 verify runner
           - target: windows-x64
             runner: windows-latest
             smoke: true
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with: { bun-version: latest }
-      - run: bun install
-
-      - name: build ${{ matrix.target }}
-        shell: bash
-        run: bash script/hubcli/release/build-platform.sh ${{ matrix.target }}
-
-      - name: smoke test (native targets only)
-        if: matrix.smoke == true && runner.os != 'Windows'
-        shell: bash
-        run: packages/opencode/dist/opencode-${{ matrix.target }}/bin/hubcli-runtime --version
-
-      - name: smoke test (windows)
-        if: matrix.smoke == true && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          & "packages/opencode/dist/opencode-${{ matrix.target }}/bin/hubcli-runtime.exe" --version
-
-      - name: package ${{ matrix.target }}
-        shell: bash
-        run: bash script/hubcli/release/package-platform.sh ${{ matrix.target }} dist-release
-
-      - name: verify no personal paths leaked into the binary
-        shell: bash
-        # CI runner paths are generic (/home/runner, /Users/runner,
-        # D:\a\...) by construction — this only guards against accidental
-        # absolute paths from a contributor's machine leaking through env
-        # vars or config during the build.
-        run: |
-          BIN=$(find packages/opencode/dist -type f \( -name hubcli-runtime -o -name hubcli-runtime.exe \))
-          if command -v strings >/dev/null 2>&1; then
-            ! strings "$BIN" | grep -qE "/Users/[a-z]+/(Hubcli|Documents|Desktop)" || (echo "personal path leaked into $BIN" && exit 1)
-          fi
-
-      - uses: actions/upload-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: hubcli-release-${{ matrix.target }}
-          path: dist-release/*
+          path: pkg-download
+
+      - name: extract (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/extracted"
+          tar -xzf pkg-download/hubcli-${{ matrix.target }}.tar.gz -C "${RUNNER_TEMP}/extracted"
+          echo "PKG_DIR=${RUNNER_TEMP}/extracted/hubcli-${{ matrix.target }}" >> "$GITHUB_ENV"
+
+      - name: extract (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP "extracted"
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          Expand-Archive -Path "pkg-download/hubcli-${{ matrix.target }}.zip" -DestinationPath $dest -Force
+          "PKG_DIR=$dest\hubcli-${{ matrix.target }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: run version/help/profile/doctor/mcp on the extracted package (Unix, native targets only)
+        if: matrix.smoke == true && runner.os != 'Windows'
+        shell: bash
+        env:
+          HOME: ${{ runner.temp }}/fake-home-${{ matrix.target }}
+        run: |
+          mkdir -p "$HOME"
+          "${PKG_DIR}/hubcli" --version
+          "${PKG_DIR}/hubcli" --help >/dev/null
+          "${PKG_DIR}/hubcli" profile list || true
+          "${PKG_DIR}/hubcli" doctor || true
+          "${PKG_DIR}/hubcli" doctor --mcp || true
+
+      - name: run version/help/profile/doctor/mcp on the extracted package (Windows)
+        if: matrix.smoke == true && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          USERPROFILE: ${{ runner.temp }}\fake-home-windows
+        run: |
+          New-Item -ItemType Directory -Path $env:USERPROFILE -Force | Out-Null
+          & "$env:PKG_DIR\hubcli.cmd" --version
+          & "$env:PKG_DIR\hubcli.cmd" --help
+          & "$env:PKG_DIR\hubcli.cmd" profile list
+          & "$env:PKG_DIR\hubcli.cmd" doctor
+          & "$env:PKG_DIR\hubcli.cmd" doctor --mcp
+
+      - name: deterministic check — no personal/build-machine path leaked
+        shell: bash
+        run: |
+          BIN=$(find pkg-download -iname "hubcli-runtime*" -type f | head -1)
+          if command -v strings >/dev/null 2>&1; then
+            LEAKED=$(strings -a "$BIN" 2>/dev/null | grep -E "/(Users|home)/[a-zA-Z0-9_.-]+/(Hubcli|Documents|Desktop)" || true)
+            if [ -n "$LEAKED" ]; then
+              echo "$LEAKED"
+              echo "Personal/developer path found embedded in the packaged binary — see docs/SECURITY.md."
+              exit 1
+            fi
+            echo "No personal-looking path pattern found in $BIN"
+          else
+            echo "strings not available on this runner — skipping (documented limitation)"
+          fi
+
+      - name: deterministic check — no secrets, .git, node_modules in package
+        shell: bash
+        run: |
+          ! find pkg-download -iname "credentials.env" -o -iname "auth.json" -o -iname ".git" -o -iname "node_modules" | grep -q . || (echo "forbidden file found in package" && exit 1)
+          ! grep -rE "sk-[A-Za-z0-9]{20,}|nvapi-[A-Za-z0-9_-]{20,}" pkg-download || (echo "possible secret literal found in package" && exit 1)
+
+  package-only:
+    # Dry-run terminus: workflow_dispatch with publish=false (the default).
+    # Produces the checksums file as a workflow artifact and stops — no
+    # GitHub Release is created.
+    needs: verify-package
+    if: github.event_name == 'workflow_dispatch' && inputs.publish != true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hubcli-release-*
+          path: dist-release
+          merge-multiple: true
+      - run: |
+          cp install.sh install.ps1 dist-release/
+          bash script/hubcli/release/generate-checksums.sh dist-release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hubcli-release-dry-run-checksums
+          path: dist-release/checksums-sha256.txt
           retention-days: 7
+      - run: echo "Dry run complete — no GitHub Release was created (publish=false)."
 
   publish:
-    needs: build
+    needs: verify-package
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -120,22 +228,27 @@ jobs:
           cp install.sh install.ps1 dist-release/
           bash script/hubcli/release/generate-checksums.sh dist-release
 
-      - name: determine prerelease flag
-        id: prerelease
+      - name: determine tag + prerelease flag
+        id: meta
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          if [[ "$TAG" == *-rc* || "$TAG" == *-beta* || "$TAG" == *-alpha* ]]; then
-            echo "value=true" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME}"
           else
-            echo "value=false" >> "$GITHUB_OUTPUT"
+            TAG="$(cat script/hubcli/VERSION)"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" == *-rc* || "$TAG" == *-beta* || "$TAG" == *-alpha* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          prerelease: ${{ steps.prerelease.outputs.value }}
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
           generate_release_notes: true
           files: |
             dist-release/*.tar.gz

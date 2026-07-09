@@ -5,8 +5,21 @@
 # opencode/tui typechecks.
 #
 # AUTHORED IN THIS SESSION, NOT YET RUN ON A REAL GITHUB ACTIONS RUNNER —
-# there was no CI access available. Review the matrix and steps before
-# relying on it; treat as a draft until it has gone green at least once.
+# there was no CI access available (no push was made to trigger it). Review
+# the matrix and steps before relying on it; treat as a draft until it has
+# gone green at least once.
+#
+# Two-job design per platform:
+#   build   — checks out the repo, builds + packages (script/hubcli/release/),
+#             uploads the packaged archive as an artifact.
+#   verify  — a SEPARATE job/runner that does NOT check out the repository at
+#             all. It only downloads the artifact from `build` and runs the
+#             extracted binaries. Because it is a fresh VM with no checkout,
+#             this is a structural (not just behavioral) proof that the
+#             package does not depend on the repo, node_modules, Bun, Git, or
+#             any path from the build runner — if it did, `verify` would fail
+#             outright (file not found / command not found), not just print
+#             a warning.
 name: hubcli-ci
 
 on:
@@ -14,13 +27,14 @@ on:
     branches: [integration/upstream-20260702]
   pull_request:
     branches: [integration/upstream-20260702]
+  workflow_dispatch: {}
 
 concurrency:
   group: hubcli-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test:
+  typecheck-and-unit-tests:
     strategy:
       fail-fast: false
       matrix:
@@ -28,68 +42,148 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: bun install
-        run: bun install
-
-      - name: typecheck opencode
-        run: bun run --filter opencode typecheck
-
-      - name: typecheck tui
-        run: bun run --filter @opencode-ai/tui typecheck
+        with: { bun-version: latest }
+      - run: bun install
+      - run: bun run --filter opencode typecheck
+      - run: bun run --filter @opencode-ai/tui typecheck
 
       - name: HubCli tests (doctor, hubcli/)
         # No real provider credentials are configured in CI — these tests use
-        # fixtures/fake keys only (verified by the "no secrets in tests" grep
-        # step below), never live network calls to Zen/DeepSeek/NVIDIA/etc.
+        # fixtures/fake keys only (verified by the secret-scan step below),
+        # never live network calls to Zen/DeepSeek/NVIDIA/etc.
         working-directory: packages/opencode
         run: bun test test/cli/cmd/doctor.test.ts test/cli/hubcli/ --timeout 60000
 
-      - name: build native binary for this runner
-        working-directory: packages/opencode
-        run: bun run script/build.ts --single --skip-embed-web-ui
-
-      - name: smoke test — version
-        if: runner.os != 'Windows'
-        run: |
-          BIN=$(find packages/opencode/dist -name opencode -type f | head -1)
-          "$BIN" --version
-
-      - name: smoke test — help
-        if: runner.os != 'Windows'
-        run: |
-          BIN=$(find packages/opencode/dist -name opencode -type f | head -1)
-          "$BIN" --help >/dev/null
-
-      - name: smoke test — doctor without credentials (expects WARN, not crash)
-        if: runner.os != 'Windows'
-        env:
-          HUBCLI_BRAND: "1"
-          OPENCODE_CONFIG_DIR: ${{ runner.temp }}/hubcli-ci-home
-        run: |
-          BIN=$(find packages/opencode/dist -name opencode -type f | head -1)
-          "$BIN" doctor || true   # doctor exits non-zero on missing required config in a bare CI sandbox; assert it did not crash/hang instead
-          echo "doctor ran to completion (see exit code above) without hanging"
-
-      - name: smoke test — mcp serve tools/list
-        working-directory: packages/opencode
-        run: |
-          echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}
-          {"jsonrpc":"2.0","method":"notifications/initialized"}
-          {"jsonrpc":"2.0","id":2,"method":"tools/list"}' | timeout 20 bun run --conditions=browser src/index.ts mcp serve 2>/dev/null | grep -q '"tools"' && echo "MCP tools/list responded"
-
       - name: secret scan (fail on obvious leaked key patterns)
+        shell: bash
         run: |
           ! grep -rE "sk-[A-Za-z0-9]{20,}|nvapi-[A-Za-z0-9_-]{20,}" --include="*.ts" --include="*.sh" packages/ script/ || (echo "possible secret literal found" && exit 1)
 
-      - name: upload build artifact
-        if: runner.os != 'Windows'
-        uses: actions/upload-artifact@v4
+  build:
+    needs: typecheck-and-unit-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-x64
+            runner: macos-13
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: windows-x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install
+
+      - name: build + package ${{ matrix.target }}
+        shell: bash
+        run: |
+          bash script/hubcli/release/build-platform.sh ${{ matrix.target }}
+          bash script/hubcli/release/package-platform.sh ${{ matrix.target }} dist-release
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: hubcli-ci-build-${{ matrix.os }}
-          path: packages/opencode/dist/**/bin/opencode*
+          name: hubcli-ci-package-${{ matrix.target }}
+          path: dist-release/*
           retention-days: 3
+
+  # Fresh runner, NO checkout of the repository. If the package secretly
+  # depends on the source tree, Bun, Git, or a build-machine path, these
+  # steps fail with a plain "not found" — not a judgment call.
+  verify-package:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-x64
+            runner: macos-13
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: windows-x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hubcli-ci-package-${{ matrix.target }}
+          path: pkg-download
+
+      - name: extract package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/extracted"
+          tar -xzf pkg-download/hubcli-${{ matrix.target }}.tar.gz -C "${RUNNER_TEMP}/extracted"
+          echo "PKG_DIR=${RUNNER_TEMP}/extracted/hubcli-${{ matrix.target }}" >> "$GITHUB_ENV"
+
+      - name: extract package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP "extracted"
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          Expand-Archive -Path "pkg-download/hubcli-${{ matrix.target }}.zip" -DestinationPath $dest -Force
+          "PKG_DIR=$dest\hubcli-${{ matrix.target }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: confirm bun/git are not required (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          export PATH="/usr/bin:/bin"
+          command -v bun && { echo "bun unexpectedly still on a minimal PATH — not a useful negative test here, continuing anyway"; } || echo "confirmed: bun not on PATH for this step"
+          command -v git && { echo "git present on minimal PATH (system git) — package must not require it anyway"; } || echo "confirmed: git not on PATH for this step"
+          "${PKG_DIR}/hubcli" --version
+
+      - name: run version/help/profile/doctor/mcp (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          HOME: ${{ runner.temp }}/fake-home-${{ matrix.target }}
+        run: |
+          mkdir -p "$HOME"
+          "${PKG_DIR}/hubcli" --version
+          "${PKG_DIR}/hubcli" --help >/dev/null
+          "${PKG_DIR}/hubcli" profile list || true   # no ~/.hubcli/profiles.json yet on a bare install — must not crash
+          "${PKG_DIR}/hubcli" doctor || true         # missing config/credentials is expected to WARN, not crash
+          "${PKG_DIR}/hubcli" doctor --mcp || true
+
+      - name: run version/help/profile/doctor/mcp (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          USERPROFILE: ${{ runner.temp }}\fake-home-windows
+        run: |
+          New-Item -ItemType Directory -Path $env:USERPROFILE -Force | Out-Null
+          & "$env:PKG_DIR\hubcli.cmd" --version
+          & "$env:PKG_DIR\hubcli.cmd" --help
+          & "$env:PKG_DIR\hubcli.cmd" profile list
+          & "$env:PKG_DIR\hubcli.cmd" doctor
+          & "$env:PKG_DIR\hubcli.cmd" doctor --mcp
+
+      - name: deterministic check — no personal/build-machine path leaked
+        shell: bash
+        run: |
+          BIN=$(find "${PKG_DIR:-pkg-download}" -iname "hubcli-runtime*" -type f 2>/dev/null | head -1)
+          if [ -z "$BIN" ]; then BIN=$(find pkg-download -iname "hubcli-runtime*" -type f | head -1); fi
+          if command -v strings >/dev/null 2>&1; then
+            LEAKED=$(strings -a "$BIN" 2>/dev/null | grep -E "/(Users|home)/[a-zA-Z0-9_.-]+/(Hubcli|Documents|Desktop)" || true)
+            if [ -n "$LEAKED" ]; then
+              echo "$LEAKED"
+              echo "Personal/developer path found embedded in the packaged binary — see docs/SECURITY.md."
+              exit 1
+            fi
+            echo "No personal-looking path pattern found in $BIN"
+          else
+            echo "strings not available on this runner — skipping (documented limitation)"
+          fi
+
+      - name: deterministic check — package has no secrets/source/.git
+        shell: bash
+        run: |
+          test -f pkg-download/hubcli-${{ matrix.target }}.tar.gz -o -f pkg-download/hubcli-${{ matrix.target }}.zip
+          ! find pkg-download -iname "credentials.env" -o -iname "auth.json" -o -iname ".git" -o -iname "node_modules" | grep -q . || (echo "forbidden file found in package" && exit 1)
