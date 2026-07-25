@@ -159,10 +159,19 @@ export interface RouteResult {
   error?: string
 }
 
-function modelAvailability(full: string, degraded: string[]): { available: boolean; reason: string } {
+export interface ProviderState {
+  available: boolean
+  reason?: string
+}
+
+export type ProviderStateMap = Record<string, ProviderState>
+
+function modelAvailability(full: string, degraded: string[], providerState: ProviderStateMap = {}): { available: boolean; reason: string } {
   const entry = findRegistryEntry(full)
   if (!entry) return { available: false, reason: "not in validated registry" }
   if (degraded.includes(entry.provider)) return { available: false, reason: `provider ${entry.provider} marked degraded` }
+  const explicit = providerState[entry.provider]
+  if (explicit) return { available: explicit.available, reason: explicit.reason ?? (explicit.available ? "available" : `provider ${entry.provider} unavailable`) }
   const credVar = PROVIDER_CREDENTIAL[entry.provider]
   if (credVar === null) {
     const auth = checkOpenCodeAuth()
@@ -175,7 +184,7 @@ function modelAvailability(full: string, degraded: string[]): { available: boole
 
 export function resolveProfile(
   name: string,
-  opts: { noFallback?: boolean } = {},
+  opts: { noFallback?: boolean; providerState?: ProviderStateMap } = {},
   file?: ProfilesFile,
 ): RouteResult {
   const { data, warning } = file ? { data: file, warning: undefined } : loadProfiles()
@@ -213,7 +222,7 @@ export function resolveProfile(
     if (entry?.experimental && nonExperimental.length > 0 && steps.some((s) => s.status === "skipped")) {
       // experimental only as last resort — still evaluated below
     }
-    const avail = modelAvailability(m, data.degraded_providers)
+    const avail = modelAvailability(m, data.degraded_providers, opts.providerState)
     if (avail.available) {
       selected = m
       const isFirst = m === profile.models[0]

@@ -14,7 +14,9 @@ import {
   saveProfiles,
   resolveProfile,
   type ProfilesFile,
+  type ProviderStateMap,
 } from "../../../src/cli/hubcli/profiles"
+import { findRegistryEntry } from "../../../src/cli/hubcli/model-registry"
 
 let tmpDirs: string[] = []
 function tmpfile(name: string): string {
@@ -115,6 +117,10 @@ describe("saveProfiles", () => {
 })
 
 describe("resolveProfile — routing and limited fallback", () => {
+  const healthyOpenCode: ProviderStateMap = {
+    opencode: { available: true },
+  }
+
   // fixture with full control — never touches ~/.hubcli
   function fixture(overrides: Partial<ProfilesFile> = {}): ProfilesFile {
     return { ...defaultProfiles(), ...overrides }
@@ -127,8 +133,9 @@ describe("resolveProfile — routing and limited fallback", () => {
   })
 
   test("first model selected when its provider is healthy", () => {
-    // coding starts with opencode/gpt-5.2-codex — opencode auth exists on this machine
-    const r = resolveProfile("coding", {}, fixture())
+    const f = fixture({ degraded_providers: ["alibaba-token-plan"] })
+    expect(findRegistryEntry("opencode/gpt-5.2-codex")).toBeDefined()
+    const r = resolveProfile("coding", { providerState: healthyOpenCode }, f)
     expect(r.ok).toBe(true)
     expect(r.model).toBe("opencode/gpt-5.2-codex")
     expect(r.fallback).toBe(false)
@@ -141,7 +148,9 @@ describe("resolveProfile — routing and limited fallback", () => {
       description: "t",
       models: ["alibaba-token-plan/qwen3.7-max", "opencode/gpt-5.2-codex"],
     }
-    const r = resolveProfile("test-degraded", {}, f)
+    expect(findRegistryEntry("alibaba-token-plan/qwen3.7-max")).toBeDefined()
+    expect(findRegistryEntry("opencode/gpt-5.2-codex")).toBeDefined()
+    const r = resolveProfile("test-degraded", { providerState: healthyOpenCode }, f)
     expect(r.ok).toBe(true)
     expect(r.model).toBe("opencode/gpt-5.2-codex")
     expect(r.fallback).toBe(true)
@@ -166,7 +175,9 @@ describe("resolveProfile — routing and limited fallback", () => {
     const f = fixture()
     f.degraded_providers = ["alibaba-token-plan", "deepseek", "nvidia"]
     // long-context: minimax (degraded), deepseek (degraded), gpt-5.2 (ok) — fable never reached
-    const r = resolveProfile("long-context", {}, f)
+    expect(findRegistryEntry("opencode/gpt-5.2")).toBeDefined()
+    expect(findRegistryEntry("opencode/claude-fable-5")).toBeDefined()
+    const r = resolveProfile("long-context", { providerState: healthyOpenCode }, f)
     expect(r.ok).toBe(true)
     expect(r.model).toBe("opencode/gpt-5.2")
   })
@@ -182,7 +193,7 @@ describe("resolveProfile — routing and limited fallback", () => {
   })
 
   test("steps never contain credential values", () => {
-    const r = resolveProfile("coding", {}, fixture())
+    const r = resolveProfile("coding", { providerState: healthyOpenCode }, fixture())
     const text = JSON.stringify(r)
     expect(text).not.toMatch(/sk-[A-Za-z0-9]{4,}/)
     expect(text).not.toMatch(/nvapi-[A-Za-z0-9]/)
