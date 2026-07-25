@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect, afterAll } from "bun:test"
-import { execFileSync } from "child_process"
+import { execFileSync, spawnSync } from "child_process"
 import { createHash } from "crypto"
 import fs from "fs"
 import os from "os"
@@ -46,6 +46,19 @@ function run(cmd: string, args: string[], env?: NodeJS.ProcessEnv): { stdout: st
       stdout: (error.stdout?.toString() ?? "") + (error.stderr?.toString() ?? ""),
       status: error.status ?? 1,
     }
+  }
+}
+
+function runDetailed(
+  cmd: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+): { stdout: string; stderr: string; status: number } {
+  const result = spawnSync(cmd, args, { encoding: "utf8", env })
+  return {
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? result.error?.message ?? "",
+    status: result.status ?? 1,
   }
 }
 
@@ -268,17 +281,45 @@ describe("install.sh (local source, no network)", () => {
 describe("install.ps1", () => {
   test("has checksum, repair and uninstall controls without executable Invoke-Expression", () => {
     const content = fs.readFileSync(INSTALL_PS1, "utf8")
+    const executable = content
+      .split(/\r?\n/)
+      .filter((line) => !line.trimStart().startsWith("#") && line.trim() !== "")
+      .join("\n")
     expect(content).toContain("Get-FileHash")
     expect(content).toContain("[switch]$Repair")
     expect(content).toContain("[switch]$Uninstall")
+    expect(content).toContain("[switch]$Help")
+    expect(executable.startsWith("param(")).toBe(true)
+    expect(content).not.toContain("[CmdletBinding()]")
+    expect(content.indexOf("if ($Help)")).toBeLessThan(content.indexOf('$ErrorActionPreference = "Stop"'))
+    expect(content.indexOf("if ($DryRun)")).toBeLessThan(content.indexOf("Invoke-RestMethod"))
     expect(content).not.toMatch(/^\s*(Invoke-Expression|iex)\b/im)
     expect(content).not.toMatch(/\[(string|securestring)\]\$(ApiKey|Token|DeepseekKey|NvidiaKey)\b/i)
   })
 
   testWindows("-Help succeeds without network or credentials", () => {
-    const { stdout, status } = run("pwsh", ["-NoProfile", "-File", INSTALL_PS1, "-Help"])
+    const { stdout, stderr, status } = runDetailed("pwsh", ["-NoProfile", "-File", INSTALL_PS1, "-Help"])
+    if (status !== 0) {
+      throw new Error(`install.ps1 -Help exited ${status}\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    }
     expect(status).toBe(0)
     expect(stdout).toMatch(/HubCli|install/i)
+    expect(stderr).toBe("")
+  })
+
+  testWindows("-DryRun succeeds without network or file changes", () => {
+    const userProfile = tmpdir("hubcli-powershell-dry-run-")
+    const before = fs.readdirSync(userProfile)
+    const { stdout, stderr, status } = runDetailed("pwsh", ["-NoProfile", "-File", INSTALL_PS1, "-DryRun"], {
+      ...process.env,
+      USERPROFILE: userProfile,
+    })
+    if (status !== 0) {
+      throw new Error(`install.ps1 -DryRun exited ${status}\nstdout:\n${stdout}\nstderr:\n${stderr}`)
+    }
+    expect(stdout).toContain("no network or file changes")
+    expect(stderr).toBe("")
+    expect(fs.readdirSync(userProfile)).toEqual(before)
   })
 
   test("Windows build and package scripts use native executables and zip packaging", () => {
@@ -293,6 +334,25 @@ describe("install.ps1", () => {
 })
 
 describe("package security scan", () => {
+  testPosix("source scan ignores dependencies but rejects a matching source file", () => {
+    const dir = tmpdir("hubcli-source-scan-")
+    const dependency = path.join(dir, "node_modules", "pkg", "test.ts")
+    const source = path.join(dir, "src", "real.ts")
+    fs.mkdirSync(path.dirname(dependency), { recursive: true })
+    fs.mkdirSync(path.dirname(source), { recursive: true })
+    fs.writeFileSync(dependency, "const token = 'sk-" + "n".repeat(24) + "'\n")
+
+    const ignored = run("bash", [SECRET_SCAN, dir])
+    expect(ignored.status).toBe(0)
+    expect(ignored.stdout).not.toContain("node_modules")
+
+    fs.writeFileSync(source, "const token = 'sk-" + "s".repeat(24) + "'\n")
+    const rejected = run("bash", [SECRET_SCAN, dir])
+    expect(rejected.status).not.toBe(0)
+    expect(rejected.stdout).toContain(source)
+    expect(rejected.stdout).not.toContain("node_modules")
+  })
+
   testPosix("rejects source-control and dependency directories inside a package", () => {
     for (const forbidden of [".git", "node_modules"]) {
       const dir = tmpdir(`hubcli-package-${forbidden.replace(".", "")}-`)

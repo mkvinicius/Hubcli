@@ -24,7 +24,6 @@
 #   -Uninstall          remove installed binaries (never touches config)
 #   -Help
 # =============================================================================
-[CmdletBinding()]
 param(
     [string]$Version = "",
     [string]$InstallDir = "",
@@ -35,17 +34,21 @@ param(
     [switch]$Help
 )
 
+function Show-Usage {
+    Write-Output "Usage: install.ps1 [-Version <v>] [-InstallDir <dir>] [-Check] [-Repair] [-DryRun] [-Uninstall] [-Help]"
+    Write-Output "Installs HubCli (github.com/mkvinicius/Hubcli) without requiring Git or Bun."
+    Write-Output "Never pass API keys to this script; add them to `$env:USERPROFILE\.hubcli\credentials.env after installing."
+}
+
+if ($Help) {
+    Show-Usage
+    exit 0
+}
+
 $ErrorActionPreference = "Stop"
 $Repo = "mkvinicius/Hubcli"
 $GitHubApi = "https://api.github.com/repos/$Repo"
 $GitHubReleases = "https://github.com/$Repo/releases/download"
-
-if ($Help) {
-    Write-Output "Usage: install.ps1 [-Version <v>] [-InstallDir <dir>] [-Check] [-Repair] [-DryRun] [-Uninstall] [-Help]"
-    Write-Output "Installs HubCli (github.com/$Repo) without requiring Git or Bun."
-    Write-Output "Never pass API keys to this script; add them to `$env:USERPROFILE\.hubcli\credentials.env after installing."
-    exit 0
-}
 
 if ([string]::IsNullOrEmpty($InstallDir)) {
     $InstallDir = Join-Path $env:USERPROFILE ".hubcli\bin"
@@ -66,6 +69,15 @@ if ($env:PROCESSOR_ARCHITECTURE -notin @("AMD64", "x86_64")) {
 
 $Target = "windows-x64"
 $PkgName = "hubcli-$Target"
+
+if ($DryRun) {
+    $DisplayVersion = if ([string]::IsNullOrEmpty($Version)) { "<latest>" } else { $Version }
+    Write-Output "HubCli install dry run (no network or file changes)"
+    Write-Output "Version: $DisplayVersion"
+    Write-Output "Package: $PkgName.zip"
+    Write-Output "Would install hubcli.ps1, hubcli.cmd, hubcli-runtime.exe, hubcli-fast.exe into $InstallDir"
+    exit 0
+}
 
 if ($Uninstall) {
     Write-Output "Uninstalling HubCli binaries from $InstallDir"
@@ -134,11 +146,6 @@ try {
     }
     Write-Output "Checksum verified: $ArchiveName"
 
-    if ($DryRun) {
-        Write-Output "(-DryRun) Would install hubcli.ps1, hubcli.cmd, hubcli-runtime.exe, hubcli-fast.exe into $InstallDir"
-        exit 0
-    }
-
     # -----------------------------------------------------------------------
     # Extract, back up existing binaries, install atomically
     # -----------------------------------------------------------------------
@@ -189,12 +196,13 @@ try {
 
     $creds = Join-Path $HubcliHome "credentials.env"
     if (-not (Test-Path $creds)) {
-        @"
+        $credentialTemplate = @"
 # HubCli credentials — never share this file.
 DASHSCOPE_API_KEY=
 DEEPSEEK_API_KEY=
 NVIDIA_API_KEY=
-"@ | Set-Content -Path $creds
+"@
+        Set-Content -Path $creds -Value $credentialTemplate
         Write-Output "Created $creds (empty template)"
     } else {
         Write-Output "$creds preserved"
@@ -237,7 +245,7 @@ NVIDIA_API_KEY=
             [Environment]::SetEnvironmentVariable("Path", "$userPath;$InstallDir", "User")
             Write-Output "Added. Restart your terminal for it to take effect."
         } else {
-            Write-Output "Skipped. Add manually: `$env:Path += ';$InstallDir'`"
+            Write-Output "Skipped. Add manually: `$env:Path += ';$InstallDir'"
         }
     } else {
         Write-Output "$InstallDir is already on PATH."
