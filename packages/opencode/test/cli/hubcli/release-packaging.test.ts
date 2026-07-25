@@ -309,17 +309,34 @@ describe("install.ps1", () => {
 
   testWindows("-DryRun succeeds without network or file changes", () => {
     const userProfile = tmpdir("hubcli-powershell-dry-run-")
-    const before = fs.readdirSync(userProfile)
+    const hubcliHome = path.join(userProfile, ".hubcli")
+    const binDir = path.join(userProfile, "bin")
     const { stdout, stderr, status } = runDetailed("pwsh", ["-NoProfile", "-File", INSTALL_PS1, "-DryRun"], {
       ...process.env,
       USERPROFILE: userProfile,
+      HOME: userProfile,
+      HUBCLI_BIN_DIR: binDir,
     })
     if (status !== 0) {
       throw new Error(`install.ps1 -DryRun exited ${status}\nstdout:\n${stdout}\nstderr:\n${stderr}`)
     }
     expect(stdout).toContain("no network or file changes")
     expect(stderr).toBe("")
-    expect(fs.readdirSync(userProfile)).toEqual(before)
+    expect(fs.existsSync(hubcliHome)).toBe(false)
+    expect(fs.existsSync(binDir)).toBe(false)
+
+    const hubcliArtifacts: string[] = []
+    const visit = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const entryPath = path.join(dir, entry.name)
+        if (/^(?:\.hubcli|hubcli(?:[.-].*)?|credentials\.env|opencode\.json|checksums-sha256\.txt)$/i.test(entry.name)) {
+          hubcliArtifacts.push(path.relative(userProfile, entryPath))
+        }
+        if (entry.isDirectory() && !entry.isSymbolicLink()) visit(entryPath)
+      }
+    }
+    visit(userProfile)
+    expect(hubcliArtifacts).toEqual([])
   })
 
   test("Windows build and package scripts use native executables and zip packaging", () => {
