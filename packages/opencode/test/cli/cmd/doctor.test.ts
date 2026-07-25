@@ -33,8 +33,11 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const BUN = path.join(os.homedir(), ".bun", "bin", "bun")
+const BUN = process.execPath
 const CLI_ENTRY = path.join(import.meta.dir, "../../../src/index.ts")
+const isWindows = process.platform === "win32"
+const testPosix = isWindows ? test.skip : test
+const testWindows = isWindows ? test : test.skip
 
 interface SpawnResult {
   exitCode: number
@@ -66,8 +69,10 @@ async function spawnDoctor(
 
 /** Minimal env for spawning the CLI — stripped of everything except essentials. */
 function minimalEnv(overrides: Record<string, string> = {}): Record<string, string> {
+  const home = overrides.HOME ?? os.homedir()
   return {
-    HOME: os.homedir(),         // fallback; tests override this
+    HOME: home,                 // fallback; tests override this
+    USERPROFILE: overrides.USERPROFILE ?? home,
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     TERM: "dumb",
     HUBCLI_BRAND: "1",          // required for doctor to be registered
@@ -75,6 +80,10 @@ function minimalEnv(overrides: Record<string, string> = {}): Record<string, stri
     OPENCODE_DISABLE_AUTOUPDATE: "1",
     OPENCODE_DISABLE_AUTOCOMPACT: "1",
     OPENCODE_DISABLE_MODELS_FETCH: "1",
+    SystemRoot: process.env.SystemRoot ?? "",
+    COMSPEC: process.env.COMSPEC ?? "",
+    TMP: process.env.TMP ?? os.tmpdir(),
+    TEMP: process.env.TEMP ?? os.tmpdir(),
     ...overrides,
   }
 }
@@ -109,6 +118,15 @@ const FAKE_OPENCODE_TOKEN = "fake-opencode-token-never-print-me"
 
 let fixtureRoots: string[] = []
 
+function writeLauncher(filePath: string, body: string): void {
+  fs.writeFileSync(filePath, body, "utf8")
+  if (!isWindows) fs.chmodSync(filePath, 0o755)
+}
+
+function defaultLauncherBody(): string {
+  return isWindows ? "@echo off\r\necho OK\r\nexit /b 0\r\n" : "#!/bin/sh\necho OK\n"
+}
+
 function buildFixture(opts: FixtureOpts = {}): { home: string; env: Record<string, string> } {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "hubcli-doctor-test-"))
   fixtureRoots.push(home)
@@ -120,9 +138,8 @@ function buildFixture(opts: FixtureOpts = {}): { home: string; env: Record<strin
   // The content is irrelevant — the check only tests existence + executable bit.
   const launcherDir = path.join(home, ".local", "bin")
   fs.mkdirSync(launcherDir, { recursive: true })
-  const launcherPath = path.join(launcherDir, "hubcli")
-  fs.writeFileSync(launcherPath, "#!/bin/sh\n# fixture launcher\n", "utf8")
-  fs.chmodSync(launcherPath, 0o755)
+  const launcherPath = path.join(launcherDir, isWindows ? "hubcli.cmd" : "hubcli")
+  writeLauncher(launcherPath, defaultLauncherBody())
 
   if (opts.config !== false) {
     fs.writeFileSync(
@@ -154,7 +171,7 @@ function buildFixture(opts: FixtureOpts = {}): { home: string; env: Record<strin
   if (opts.creds !== false) {
     const credsPath = path.join(hubcliDir, "credentials.env")
     fs.writeFileSync(credsPath, "# test fixture\n", "utf8")
-    fs.chmodSync(credsPath, opts.credsPerms ?? 0o600)
+    if (!isWindows) fs.chmodSync(credsPath, opts.credsPerms ?? 0o600)
   }
 
   // OpenCode auth.json fixture (fake values only — never the real file)
@@ -169,7 +186,7 @@ function buildFixture(opts: FixtureOpts = {}): { home: string; env: Record<strin
     } else {
       fs.writeFileSync(authPath, "{ not valid json !!", "utf8")
     }
-    fs.chmodSync(authPath, 0o600)
+    if (!isWindows) fs.chmodSync(authPath, 0o600)
   }
 
   // models.json cache fixture
@@ -198,7 +215,9 @@ function buildFixture(opts: FixtureOpts = {}): { home: string; env: Record<strin
 
   const env = minimalEnv({
     HOME: home,
+    USERPROFILE: home,
     OPENCODE_CONFIG_DIR: hubcliDir,
+    HUBCLI_LAUNCHER: launcherPath,
     ...(opts.env ?? {}),
   })
 
@@ -378,7 +397,7 @@ describe("doctor command — exit code 1 (config error)", () => {
 })
 
 describe("doctor command — exit code 2 (insecure permissions)", () => {
-  test(
+  testPosix(
     "exits 2 when credentials.env has permissions 644",
     async () => {
       const { env } = buildFixture({ credsPerms: 0o644 })
@@ -391,12 +410,23 @@ describe("doctor command — exit code 2 (insecure permissions)", () => {
     DOCTOR_TIMEOUT,
   )
 
-  test(
+  testPosix(
     "exits 2 when credentials.env has permissions 640",
     async () => {
       const { env } = buildFixture({ credsPerms: 0o640 })
       const result = await spawnDoctor([], env)
       expect(result.exitCode).toBe(2)
+    },
+    DOCTOR_TIMEOUT,
+  )
+
+  testWindows(
+    "does not treat unsupported Unix permissions as fatal on Windows",
+    async () => {
+      const { env } = buildFixture()
+      const result = await spawnDoctor([], env)
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain("unsupported on Windows")
     },
     DOCTOR_TIMEOUT,
   )
@@ -437,9 +467,8 @@ describe("doctor command — exit code 3 (connectivity failure)", () => {
       })
       // Make the fixture launcher fail every `hubcli run` call, so Fable,
       // gpt-5.2-codex and kimi-k2.7-code all come back unreachable.
-      const launcher = path.join(home, ".local", "bin", "hubcli")
-      fs.writeFileSync(launcher, "#!/bin/sh\nexit 1\n", "utf8")
-      fs.chmodSync(launcher, 0o755)
+      const launcher = path.join(home, ".local", "bin", isWindows ? "hubcli.cmd" : "hubcli")
+      writeLauncher(launcher, isWindows ? "@echo off\r\nexit /b 1\r\n" : "#!/bin/sh\nexit 1\n")
       const result = await spawnDoctor(["--connect"], env)
       expect(result.exitCode).toBe(3)
       expect(result.stdout).toContain("no OpenCode Zen model reachable")
@@ -459,16 +488,16 @@ describe("doctor command — exit code 3 (connectivity failure)", () => {
       })
       // Launcher stub: Zen models answer OK; the NVIDIA probe model returns a
       // raw 400 body (the exact shape the user saw) with an embedded secret.
-      const launcher = path.join(home, ".local", "bin", "hubcli")
-      fs.writeFileSync(
+      const launcher = path.join(home, ".local", "bin", isWindows ? "hubcli.cmd" : "hubcli")
+      writeLauncher(
         launcher,
-        '#!/bin/sh\ncase "$*" in\n' +
-          '  *minimax-m3*) echo \'Error: Bad Request: {"status":400,"title":"Bad Request","detail":"leak nvapi-SECRET99999 must not print"}\' >&2; exit 1 ;;\n' +
-          "  *) echo OK; exit 0 ;;\n" +
-          "esac\n",
-        "utf8",
+        isWindows
+          ? '@echo off\r\nset ARGS=%*\r\necho %ARGS% | findstr /C:"minimax-m3" >nul\r\nif %errorlevel%==0 (\r\n  echo Error: Bad Request: {"status":400,"title":"Bad Request","detail":"leak nvapi-SECRET99999 must not print"} 1>&2\r\n  exit /b 1\r\n)\r\necho OK\r\nexit /b 0\r\n'
+          : '#!/bin/sh\ncase "$*" in\n' +
+              '  *minimax-m3*) echo \'Error: Bad Request: {"status":400,"title":"Bad Request","detail":"leak nvapi-SECRET99999 must not print"}\' >&2; exit 1 ;;\n' +
+              "  *) echo OK; exit 0 ;;\n" +
+              "esac\n",
       )
-      fs.chmodSync(launcher, 0o755)
       const result = await spawnDoctor(["--connect"], env)
 
       // NVIDIA is advisory: shown as WARNING with a clean reason.
@@ -558,12 +587,23 @@ describe("doctor command — output content invariants", () => {
     DOCTOR_TIMEOUT,
   )
 
-  test(
+  testPosix(
     "credentials 600 reported as 'OK'",
     async () => {
       const { env } = buildFixture()
       const result = await spawnDoctor([], env)
       expect(result.stdout).toContain("600 (OK)")
+    },
+    DOCTOR_TIMEOUT,
+  )
+
+  testWindows(
+    "credentials permissions are reported as unsupported on Windows",
+    async () => {
+      const { env } = buildFixture()
+      const result = await spawnDoctor([], env)
+      expect(result.stdout).toContain("unsupported on Windows")
+      expect(result.exitCode).toBe(0)
     },
     DOCTOR_TIMEOUT,
   )
@@ -640,12 +680,20 @@ describe("checkOpenCodeAuth (unit, fixture paths only)", () => {
     expect(checkOpenCodeAuth(p).state).toBe("provider-absent")
   })
 
-  test("opencode entry present → present, perms reported, token never returned", () => {
+  testPosix("opencode entry present → present, perms reported, token never returned", () => {
     const p = tmpAuth(JSON.stringify({ opencode: { type: "api", key: "fake-token-value" } }))
     const result = checkOpenCodeAuth(p)
     expect(result.state).toBe("present")
     expect(result.perms).toBe("600")
     // the result object must not carry any token material
+    expect(JSON.stringify(result)).not.toContain("fake-token-value")
+  })
+
+  testWindows("opencode entry present → present without leaking token on Windows", () => {
+    const p = tmpAuth(JSON.stringify({ opencode: { type: "api", key: "fake-token-value" } }))
+    const result = checkOpenCodeAuth(p)
+    expect(result.state).toBe("present")
+    expect(result.perms).toBe("unsupported")
     expect(JSON.stringify(result)).not.toContain("fake-token-value")
   })
 })
@@ -706,21 +754,24 @@ describe("testFableConnection (unit, stub launchers — no real API)", () => {
   function stubLauncher(script: string): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hubcli-launcher-test-"))
     fixtureRoots.push(dir)
-    const p = path.join(dir, "hubcli")
-    fs.writeFileSync(p, "#!/bin/sh\n" + script + "\n", "utf8")
-    fs.chmodSync(p, 0o755)
+    const p = path.join(dir, isWindows ? "hubcli.cmd" : "hubcli")
+    writeLauncher(p, script)
     return p
   }
 
   test("exit 0 with OK → ok true", () => {
-    const launcher = stubLauncher('echo "OK"')
+    const launcher = stubLauncher(isWindows ? "@echo off\r\necho OK\r\nexit /b 0\r\n" : '#!/bin/sh\necho "OK"\n')
     const result = testFableConnection(launcher, 5_000)
     expect(result.ok).toBe(true)
     expect(result.response).toBe("OK")
   })
 
   test("timeout is distinguished from normal failure", () => {
-    const launcher = stubLauncher("sleep 10")
+    const launcher = stubLauncher(
+      isWindows
+        ? `@echo off\r\n"${BUN}" -e "setTimeout(() => {}, 10000)"\r\n`
+        : '#!/bin/sh\nsleep 10\n',
+    )
     const result = testFableConnection(launcher, 500)
     expect(result.ok).toBe(false)
     expect(result.timedOut).toBe(true)
@@ -728,7 +779,11 @@ describe("testFableConnection (unit, stub launchers — no real API)", () => {
   })
 
   test("stderr with sk- key is sanitized", () => {
-    const launcher = stubLauncher('echo "error with key sk-SECRETKEY12345" >&2; exit 1')
+    const launcher = stubLauncher(
+      isWindows
+        ? '@echo off\r\necho error with key sk-SECRETKEY12345 1>&2\r\nexit /b 1\r\n'
+        : '#!/bin/sh\necho "error with key sk-SECRETKEY12345" >&2\nexit 1\n',
+    )
     const result = testFableConnection(launcher, 5_000)
     expect(result.ok).toBe(false)
     expect(result.timedOut).not.toBe(true)
@@ -737,7 +792,7 @@ describe("testFableConnection (unit, stub launchers — no real API)", () => {
   })
 
   test("nonzero exit without output → exit code reported", () => {
-    const launcher = stubLauncher("exit 7")
+    const launcher = stubLauncher(isWindows ? "@echo off\r\nexit /b 7\r\n" : "#!/bin/sh\nexit 7\n")
     const result = testFableConnection(launcher, 5_000)
     expect(result.ok).toBe(false)
     expect(result.error).toContain("exit 7")

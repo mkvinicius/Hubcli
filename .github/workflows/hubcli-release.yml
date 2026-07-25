@@ -52,6 +52,9 @@ jobs:
       - run: bun run --filter @opencode-ai/tui typecheck
       - working-directory: packages/opencode
         run: bun test test/cli/cmd/doctor.test.ts test/cli/hubcli/ --timeout 60000
+      - name: secret scan
+        shell: bash
+        run: bash script/hubcli/release/scan-secrets.sh
 
   build:
     needs: test

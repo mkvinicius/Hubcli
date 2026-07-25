@@ -27,10 +27,12 @@ import { InstallationVersion } from "@opencode-ai/core/installation/version"
 // ---------------------------------------------------------------------------
 
 const HOME = os.homedir()
-const HUBCLI_HOME = path.join(HOME, ".hubcli")
+const HUBCLI_HOME = process.env.OPENCODE_CONFIG_DIR ? path.resolve(process.env.OPENCODE_CONFIG_DIR) : path.join(HOME, ".hubcli")
 const HUBCLI_CONFIG = path.join(HUBCLI_HOME, "opencode.json")
 const HUBCLI_CREDS = path.join(HUBCLI_HOME, "credentials.env")
-const HUBCLI_LAUNCHER = path.join(HOME, ".local", "bin", "hubcli")
+const HUBCLI_LAUNCHER =
+  process.env.HUBCLI_LAUNCHER ??
+  path.join(HOME, ".local", "bin", process.platform === "win32" ? "hubcli.cmd" : "hubcli")
 const HUBCLI_SRC = path.join(HOME, "Hubcli")
 // OpenCode internal auth — stores provider keys for opencode/opencode-go
 const OPENCODE_AUTH = path.join(HOME, ".local", "share", "opencode", "auth.json")
@@ -126,6 +128,7 @@ function shortPath(p: string): string {
 
 /** Return "600" on macOS/Linux from stat mode. */
 function octalPerms(filePath: string): string | null {
+  if (process.platform === "win32") return fs.existsSync(filePath) ? "unsupported" : null
   try {
     const mode = fs.statSync(filePath).mode
     return (mode & 0o777).toString(8).padStart(3, "0")
@@ -135,6 +138,7 @@ function octalPerms(filePath: string): string | null {
 }
 
 function isExecutable(filePath: string): boolean {
+  if (process.platform === "win32") return fs.existsSync(filePath)
   try {
     fs.accessSync(filePath, fs.constants.X_OK)
     return true
@@ -337,6 +341,10 @@ export interface ConnectResult {
 const FABLE_CONNECT_TIMEOUT_MS = 60_000
 const FABLE_OUTPUT_LIMIT = 64 * 1024 // cap stdout/stderr capture
 
+function needsWindowsCommandShell(launcher: string): boolean {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(launcher)
+}
+
 export function testZenConnection(
   modelFull: string,
   launcher: string = HUBCLI_LAUNCHER,
@@ -349,6 +357,7 @@ export function testZenConnection(
     timeout: timeoutMs,
     maxBuffer: FABLE_OUTPUT_LIMIT,
     env: { ...process.env, HUBCLI_BRAND: "1" },
+    shell: needsWindowsCommandShell(launcher),
   })
   const ms = Date.now() - start
   const timedOut = result.error != null && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT"
@@ -410,6 +419,7 @@ export async function testMcpServer(
     const proc = spawn(launcher, ["mcp", "serve"], {
       stdio: ["pipe", "pipe", "ignore"],
       env: { ...process.env, HUBCLI_BRAND: "1" },
+      shell: needsWindowsCommandShell(launcher),
     })
     let buffer = ""
     let done = false
@@ -483,6 +493,9 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean; mcp: boolea
     if (perms === "600") {
       line("Permissions", "600 (OK)")
       addCheck("credentials-perms", "OK", "600")
+    } else if (perms === "unsupported") {
+      line("Permissions", "unsupported on Windows")
+      addCheck("credentials-perms", "WARN", "unsupported on Windows")
     } else {
       line("Permissions", `${perms ?? "unknown"} (INSECURE — run: chmod 600 ${shortPath(HUBCLI_CREDS)})`)
       addCheck("credentials-perms", "FAIL", `${perms ?? "unknown"} — must be 600`)
@@ -571,7 +584,7 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean; mcp: boolea
   // Credentials file permissions (re-checked for addCheck)
   if (fs.existsSync(HUBCLI_CREDS)) {
     const perms = octalPerms(HUBCLI_CREDS)
-    line("Credentials perms", perms === "600" ? "OK (600)" : `INSECURE (${perms})`)
+    line("Credentials perms", perms === "600" ? "OK (600)" : perms === "unsupported" ? "unsupported on Windows" : `INSECURE (${perms})`)
   }
 
   // Git repo status
@@ -610,7 +623,10 @@ async function runDoctor(opts: { connect: boolean; verbose: boolean; mcp: boolea
   line("Authentication", authLabels[fableAuth.state])
   line("Claude Code tokens", "not used")
   if (fableAuth.perms && fableAuth.state !== "missing-file") {
-    line("Auth file perms", fableAuth.perms === "600" ? "600 (OK)" : `${fableAuth.perms} (consider: chmod 600)`)
+    line(
+      "Auth file perms",
+      fableAuth.perms === "600" ? "600 (OK)" : fableAuth.perms === "unsupported" ? "unsupported on Windows" : `${fableAuth.perms} (consider: chmod 600)`,
+    )
   }
   addCheck(
     "fable5-auth",

@@ -57,8 +57,7 @@ jobs:
 
       - name: secret scan (fail on obvious leaked key patterns)
         shell: bash
-        run: |
-          ! grep -rE "sk-[A-Za-z0-9]{20,}|nvapi-[A-Za-z0-9_-]{20,}" --include="*.ts" --include="*.sh" packages/ script/ || (echo "possible secret literal found" && exit 1)
+        run: bash script/hubcli/release/scan-secrets.sh
 
   build:
     needs: typecheck-and-unit-tests
