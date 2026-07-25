@@ -13,9 +13,9 @@ OUT_DIR="${1:-}"
 
 _sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1"
+    sha256sum "$1" | awk '{print $1}'
   else
-    shasum -a 256 "$1"
+    shasum -a 256 "$1" | awk '{print $1}'
   fi
 }
 
@@ -26,7 +26,7 @@ cd "$OUT_DIR"
 for f in *.tar.gz *.zip install.sh install.ps1; do
   [ -f "$f" ] || continue
   [ "$f" = "checksums-sha256.txt" ] && continue
-  _sha256 "$f" >> "$_checksums"
+  printf '%s  %s\n' "$(_sha256 "$f")" "$f" >> "$_checksums"
 done
 
 echo "generate-checksums.sh: wrote $_checksums"

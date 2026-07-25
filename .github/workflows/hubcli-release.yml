@@ -42,7 +42,11 @@ concurrency:
 
 jobs:
   test:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -53,6 +57,7 @@ jobs:
       - working-directory: packages/opencode
         run: bun test test/cli/cmd/doctor.test.ts test/cli/hubcli/ --timeout 60000
       - name: secret scan
+        if: runner.os == 'Linux'
         shell: bash
         run: bash script/hubcli/release/scan-secrets.sh
 
@@ -79,11 +84,19 @@ jobs:
         with: { bun-version: latest }
       - run: bun install
 
-      - name: build + package ${{ matrix.target }}
+      - name: build + package ${{ matrix.target }} (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           bash script/hubcli/release/build-platform.sh ${{ matrix.target }}
           bash script/hubcli/release/package-platform.sh ${{ matrix.target }} dist-release
+
+      - name: build + package ${{ matrix.target }} (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & script/hubcli/release/build-platform.ps1 -Target ${{ matrix.target }}
+          & script/hubcli/release/package-platform.ps1 -Target ${{ matrix.target }} -OutDir dist-release
 
       - uses: actions/upload-artifact@v4
         with:
@@ -162,12 +175,19 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path $env:USERPROFILE -Force | Out-Null
           & "$env:PKG_DIR\hubcli.cmd" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$env:PKG_DIR\hubcli.cmd" --help
-          & "$env:PKG_DIR\hubcli.cmd" profile list
-          & "$env:PKG_DIR\hubcli.cmd" doctor
-          & "$env:PKG_DIR\hubcli.cmd" doctor --mcp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          function Invoke-HubCliDiagnostic([string[]]$CommandArgs) {
+            & "$env:PKG_DIR\hubcli.cmd" @CommandArgs
+            if ($LASTEXITCODE -notin @(0, 1, 2)) { exit $LASTEXITCODE }
+          }
+          Invoke-HubCliDiagnostic -CommandArgs @("profile", "list")
+          Invoke-HubCliDiagnostic -CommandArgs @("doctor")
+          Invoke-HubCliDiagnostic -CommandArgs @("doctor", "--mcp")
 
-      - name: deterministic check — no personal/build-machine path leaked
+      - name: deterministic check — no personal/build-machine path leaked (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           BIN=$(find pkg-download -iname "hubcli-runtime*" -type f | head -1)
@@ -183,11 +203,41 @@ jobs:
             echo "strings not available on this runner — skipping (documented limitation)"
           fi
 
-      - name: deterministic check — no secrets, .git, node_modules in package
+      - name: deterministic check — no personal/build-machine path leaked (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binary = Get-ChildItem -Path $env:PKG_DIR -Filter "hubcli-runtime*.exe" -File | Select-Object -First 1
+          if (-not $binary) { throw "hubcli-runtime.exe not found in extracted package" }
+          $text = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($binary.FullName))
+          if ($text -match '/Users/[A-Za-z0-9_.-]+/(Hubcli|Documents|Desktop)') {
+            throw "Personal/developer path found embedded in $($binary.FullName)"
+          }
+
+      - name: deterministic check — no secrets, .git, node_modules in package (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
-          ! find pkg-download -iname "credentials.env" -o -iname "auth.json" -o -iname ".git" -o -iname "node_modules" | grep -q . || (echo "forbidden file found in package" && exit 1)
-          ! grep -rE "sk-[A-Za-z0-9]{20,}|nvapi-[A-Za-z0-9_-]{20,}" pkg-download || (echo "possible secret literal found in package" && exit 1)
+          ! find "$PKG_DIR" \( -iname "credentials.env" -o -iname "auth.json" -o -iname ".git" -o -iname "node_modules" \) | grep -q . || (echo "forbidden file found in package" && exit 1)
+          ! grep -rEan "sk-[A-Za-z0-9]{20,}|nvapi-[A-Za-z0-9_-]{20,}|(DASHSCOPE|DEEPSEEK|NVIDIA)_API_KEY[[:space:]]*[=:][[:space:]]*[\"']?[A-Za-z0-9_./+=-]{12,}" "$PKG_DIR" || (echo "possible secret literal found in package" && exit 1)
+
+      - name: deterministic check — no secrets, .git, node_modules in package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $forbidden = Get-ChildItem -Path $env:PKG_DIR -Recurse -Force |
+            Where-Object { $_.Name -in @("credentials.env", "auth.json", ".git", "node_modules") }
+          if ($forbidden) {
+            $forbidden.FullName | Write-Output
+            throw "Forbidden file or directory found in package"
+          }
+          $secretPattern = 'sk-[A-Za-z0-9]{20,}|nvapi-[A-Za-z0-9_-]{20,}|(DASHSCOPE|DEEPSEEK|NVIDIA)_API_KEY\s*[=:]\s*["'']?[A-Za-z0-9_./+=-]{12,}'
+          $secretHits = Get-ChildItem -Path $env:PKG_DIR -Recurse -File |
+            Select-String -Pattern $secretPattern -ErrorAction SilentlyContinue
+          if ($secretHits) {
+            $secretHits | Write-Output
+            throw "Possible secret literal found in package"
+          }
 
   package-only:
     # Dry-run terminus: workflow_dispatch with publish=false (the default).
@@ -208,8 +258,8 @@ jobs:
           bash script/hubcli/release/generate-checksums.sh dist-release
       - uses: actions/upload-artifact@v4
         with:
-          name: hubcli-release-dry-run-checksums
-          path: dist-release/checksums-sha256.txt
+          name: hubcli-release-dry-run
+          path: dist-release/*
           retention-days: 7
       - run: echo "Dry run complete — no GitHub Release was created (publish=false)."
 

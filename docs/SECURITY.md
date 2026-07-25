@@ -20,10 +20,10 @@ especificamente a cadeia de distribuição (build → release → install).
 ## Achado desta sessão: paths pessoais embutidos em build local — investigado a fundo
 
 Um build local (nesta máquina, para prova de conceito) do `hubcli-runtime`
-contém 6 ocorrências do path absoluto do desenvolvedor:
+continha ocorrências do diretório pessoal do desenvolvedor:
 
 ```
-/Users/maikonviniciussilva/Hubcli/node_modules/.bun/{pino,thread-stream,write-file-atomic}
+<developer-home>/Hubcli/node_modules/.bun/{pino,thread-stream,write-file-atomic}
 ```
 
 ### Causa raiz (comprovada, não presumida)
@@ -105,8 +105,8 @@ embutir `__dirname` continue existindo. Os workflows `hubcli-ci.yml` e
 
 - [ ] artefatos vieram de `hubcli-release.yml`, não de build local
 - [ ] `checksums-sha256.txt` gerado no mesmo job de empacotamento
-- [ ] nenhum segredo real usado nos testes de CI (grep automatizado no
-      workflow, mais revisão manual)
+- [ ] nenhum segredo real usado nos testes de CI (`scan-secrets.sh` permite
+      valores fake apenas em fixtures conhecidas)
 - [ ] `credentials.env` nunca incluído em nenhum pacote (`package-platform.sh`
       só copia `hubcli-runtime`, `hubcli-fast`, `LICENSE`, `README.txt` — sem
       `~/.hubcli`)

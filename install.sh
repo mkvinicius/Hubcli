@@ -168,7 +168,7 @@ _sha256() {
   fi
 }
 
-_expected="$(grep -E "  ${ARCHIVE_NAME}\$|  ${ARCHIVE_NAME}\$" "${WORK_DIR}/checksums-sha256.txt" | awk '{print $1}' | head -1)"
+_expected="$(grep -E "^[a-fA-F0-9]{64} [ *]${ARCHIVE_NAME}\$" "${WORK_DIR}/checksums-sha256.txt" | awk '{print $1}' | head -1)"
 [ -z "$_expected" ] && abort "No checksum entry found for $ARCHIVE_NAME in checksums-sha256.txt — refusing to install"
 _actual="$(_sha256 "${WORK_DIR}/${ARCHIVE_NAME}")"
 if [ "$_expected" != "$_actual" ]; then

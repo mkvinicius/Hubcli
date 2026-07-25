@@ -660,7 +660,7 @@ describe("checkOpenCodeAuth (unit, fixture paths only)", () => {
     const p = path.join(dir, "auth.json")
     if (content !== null) {
       fs.writeFileSync(p, content, "utf8")
-      fs.chmodSync(p, perms)
+      if (!isWindows) fs.chmodSync(p, perms)
     }
     return p
   }
@@ -737,7 +737,7 @@ describe("readFableCatalog (unit, fixture paths only)", () => {
   })
 
   test("cache file missing → found false, no crash", () => {
-    const info = readFableCatalog("/nonexistent/models.json")
+    const info = readFableCatalog(path.join(os.tmpdir(), `hubcli-missing-catalog-${process.pid}`, "models.json"))
     expect(info.found).toBe(false)
   })
 

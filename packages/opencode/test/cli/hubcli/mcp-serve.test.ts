@@ -18,7 +18,7 @@ import {
 } from "../../../src/cli/hubcli/mcp-serve"
 import { MODEL_REGISTRY } from "../../../src/cli/hubcli/model-registry"
 
-const BUN = path.join(os.homedir(), ".bun", "bin", "bun")
+const BUN = process.execPath
 const CLI_ENTRY = path.join(import.meta.dir, "../../../src/index.ts")
 
 let tmpDirs: string[] = []
@@ -136,7 +136,7 @@ describe("toolProjectStatus / toolGitStatus", () => {
   })
 
   test("clientCwd falls back to process.cwd() for nonexistent override", () => {
-    process.env["HUBCLI_CALLER_PWD"] = "/nonexistent/dir/xyz"
+    process.env["HUBCLI_CALLER_PWD"] = path.join(os.tmpdir(), `hubcli-nonexistent-${process.pid}`, "xyz")
     expect(clientCwd()).toBe(process.cwd())
   })
 })
@@ -209,15 +209,22 @@ async function runMcpSession(lines: string[], env: Record<string, string>): Prom
 }
 
 function mcpEnv(): Record<string, string> {
-  return {
-    HOME: os.homedir(),
-    PATH: process.env.PATH ?? "/usr/bin:/bin",
+  const home = os.homedir()
+  const env: Record<string, string> = {
+    HOME: home,
+    USERPROFILE: home,
+    PATH: process.env.PATH ?? "",
     TERM: "dumb",
     HUBCLI_BRAND: "1",
     OPENCODE_PURE: "1",
     OPENCODE_DISABLE_AUTOUPDATE: "1",
     OPENCODE_DISABLE_MODELS_FETCH: "1",
   }
+  for (const name of ["SystemRoot", "COMSPEC", "TMP", "TEMP"]) {
+    const value = process.env[name]
+    if (value) env[name] = value
+  }
+  return env
 }
 
 const INIT = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}'

@@ -72,7 +72,8 @@ describe("validateProfiles", () => {
 
 describe("loadProfiles — safe fallback", () => {
   test("missing file → defaults", () => {
-    const { data, source } = loadProfiles("/nonexistent/profiles.json")
+    const missing = path.join(os.tmpdir(), `hubcli-missing-profiles-${process.pid}`, "profiles.json")
+    const { data, source } = loadProfiles(missing)
     expect(source).toBe("defaults")
     expect(validateProfiles(data).ok).toBe(true)
   })
