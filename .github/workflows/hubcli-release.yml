@@ -68,7 +68,7 @@ jobs:
       matrix:
         include:
           - target: darwin-x64
-            runner: macos-13
+            runner: macos-15-intel
           - target: darwin-arm64
             runner: macos-14
           - target: linux-x64
@@ -116,7 +116,7 @@ jobs:
       matrix:
         include:
           - target: darwin-x64
-            runner: macos-13
+            runner: macos-15-intel
             smoke: true
           - target: darwin-arm64
             runner: macos-14
