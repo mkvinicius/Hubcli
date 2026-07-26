@@ -383,6 +383,7 @@ describe("install.ps1", () => {
   test("Windows build and package scripts use native executables and zip packaging", () => {
     const build = fs.readFileSync(BUILD_WINDOWS, "utf8")
     const packaging = fs.readFileSync(PACKAGE_WINDOWS, "utf8")
+    const launcher = fs.readFileSync(path.join(REPO_ROOT, "script", "hubcli", "release", "hubcli.ps1"))
     expect(build).toContain('[ValidateSet("windows-x64")]')
     expect(build).toContain("--target=bun-windows-x64")
     expect(build).toContain("$RuntimeBuildExitCode = $LASTEXITCODE")
@@ -393,6 +394,9 @@ describe("install.ps1", () => {
     expect(packaging).toContain("hubcli.ps1")
     expect(packaging).toContain("$GitExitCode = $LASTEXITCODE")
     expect(packaging).toContain("$global:LASTEXITCODE = 0")
+    expect(packaging).toContain("[System.Management.Automation.Language.Parser]::ParseFile")
+    expect(packaging).toContain("[System.Text.UTF8Encoding]::new($false)")
+    expect([...launcher].every((byte) => byte <= 0x7f)).toBe(true)
   })
 
   testWindows("package creation exits 0, contains only release files, and preserves external failures", () => {
@@ -447,6 +451,52 @@ describe("install.ps1", () => {
       false,
     )
 
+    const packageRoot = path.join(extractDir, "hubcli-windows-x64")
+    const launcherPath = path.join(packageRoot, "hubcli.ps1")
+    const launcherBytes = fs.readFileSync(launcherPath)
+    const sourceLauncher = fs
+      .readFileSync(path.join(REPO_ROOT, "script", "hubcli", "release", "hubcli.ps1"), "utf8")
+      .replace("__HUBCLI_VERSION__", fs.readFileSync(path.join(REPO_ROOT, "script", "hubcli", "VERSION"), "utf8").trim())
+    expect([...launcherBytes].every((byte) => byte <= 0x7f)).toBe(true)
+    expect(launcherBytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))).toBe(false)
+    expect(launcherBytes.toString("utf8")).toBe(sourceLauncher)
+
+    const parserScript = path.join(extracted, "parse-launcher.ps1")
+    fs.writeFileSync(
+      parserScript,
+      [
+        "param([string]$Launcher)",
+        "$tokens = $null",
+        "$errors = $null",
+        "[System.Management.Automation.Language.Parser]::ParseFile($Launcher, [ref]$tokens, [ref]$errors) | Out-Null",
+        "if ($errors.Count -gt 0) { $errors | Format-List; exit 1 }",
+      ].join("\n"),
+    )
+    for (const engine of ["pwsh", "powershell"]) {
+      const parsed = runDetailed(engine, ["-NoProfile", "-File", parserScript, "-Launcher", launcherPath])
+      if (parsed.status !== 0) {
+        throw new Error(`${engine} parser failed\nstdout:\n${parsed.stdout}\nstderr:\n${parsed.stderr}`)
+      }
+      expect(parsed.status).toBe(0)
+    }
+
+    const invokeScript = path.join(extracted, "invoke-launcher.ps1")
+    fs.writeFileSync(
+      invokeScript,
+      "param([string]$Launcher)\n& $Launcher --version\nexit $LASTEXITCODE\n",
+    )
+    const invoked = runDetailed("pwsh", [
+      "-NoProfile",
+      "-File",
+      invokeScript,
+      "-Launcher",
+      path.join(packageRoot, "hubcli.cmd"),
+    ])
+    if (invoked.status !== 0) {
+      throw new Error(`packaged hubcli.cmd failed\nstdout:\n${invoked.stdout}\nstderr:\n${invoked.stderr}`)
+    }
+    expect(invoked.stdout).toContain(fs.readFileSync(path.join(REPO_ROOT, "script", "hubcli", "VERSION"), "utf8").trim())
+
     const contents = files
       .map((file) => fs.readFileSync(path.join(extractDir, file), "utf8"))
       .join("\n")
@@ -466,6 +516,24 @@ describe("install.ps1", () => {
     expect(failed.status).not.toBe(0)
     expect(failed.stdout + failed.stderr).toContain("Version tag lookup failed with exit code")
     expect(fs.existsSync(brokenFixture.archive)).toBe(false)
+
+    const malformedFixture = createWindowsPackageFixture(true)
+    fs.appendFileSync(
+      path.join(malformedFixture.root, "script", "hubcli", "release", "hubcli.ps1"),
+      "\nif ($true) {\n",
+    )
+    const malformed = runDetailed("pwsh", [
+      "-NoProfile",
+      "-File",
+      malformedFixture.packageScript,
+      "-Target",
+      "windows-x64",
+      "-OutDir",
+      "dist-release",
+    ])
+    expect(malformed.status).not.toBe(0)
+    expect(malformed.stdout + malformed.stderr).toContain("generated hubcli.ps1 has parser errors")
+    expect(fs.existsSync(malformedFixture.archive)).toBe(false)
   })
 })
 

@@ -1,11 +1,9 @@
-# hubcli.ps1 — Windows launcher for the distributed HubCli package.
+# hubcli.ps1 - Windows launcher for the distributed HubCli package.
 #
-# NOT executed against a real Windows machine in the session that authored
-# it (no Windows environment was available). Written to mirror the behavior
-# of script/hubcli/launcher-template.sh (macOS/Linux) as closely as
-# PowerShell allows: whitelist-only credential loading (no Invoke-Expression
-# on file contents), HUBCLI_DEV awareness, argument/exit-code passthrough.
-# Treat as authored-but-unverified until run on real Windows.
+# Mirrors script/hubcli/launcher-template.sh (macOS/Linux): whitelist-only
+# credential loading (no Invoke-Expression on file contents), HUBCLI_DEV
+# awareness, and argument/exit-code passthrough. Packaging tests parse it
+# with Windows PowerShell and PowerShell 7 before Windows CI executes it.
 
 $ErrorActionPreference = "Stop"
 
@@ -18,7 +16,7 @@ $FastExe = Join-Path $HubcliBinDir "hubcli-fast.exe"
 $OriginalPwd = (Get-Location).Path
 
 # ---------------------------------------------------------------------------
-# --version / -v short-circuit — HUBCLI_DEV is not meaningful for a
+# --version / -v short-circuit - HUBCLI_DEV is not meaningful for a
 # distributed Windows install (no TypeScript source is shipped), so unlike
 # the POSIX launcher this always reports the installed version.
 # ---------------------------------------------------------------------------
@@ -28,7 +26,7 @@ if ($args.Count -eq 1 -and ($args[0] -eq "--version" -or $args[0] -eq "-v")) {
 }
 
 # ---------------------------------------------------------------------------
-# Secure credential loader — no Invoke-Expression, no dot-sourcing of the
+# Secure credential loader - no Invoke-Expression, no dot-sourcing of the
 # file. Whitelist-only parser, same three variables as the POSIX launcher.
 # Does not override variables already set in the calling environment.
 # ---------------------------------------------------------------------------
@@ -52,7 +50,7 @@ if (Test-Path $HubcliCreds) {
 }
 
 if (-not (Test-Path $RuntimeExe)) {
-    Write-Error "hubcli: runtime binary not found at $RuntimeExe (installation may be corrupt — try repair)"
+    Write-Error "hubcli: runtime binary not found at $RuntimeExe (installation may be corrupt; try repair)"
     exit 1
 }
 

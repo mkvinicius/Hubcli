@@ -58,7 +58,27 @@ try {
 
     $Launcher = Get-Content (Join-Path $ScriptDir "hubcli.ps1") -Raw
     $Launcher = $Launcher.Replace("__HUBCLI_VERSION__", $Version)
-    Set-Content -Path (Join-Path $PkgDir "hubcli.ps1") -Value $Launcher -Encoding utf8
+    $LauncherPath = Join-Path $PkgDir "hubcli.ps1"
+    [System.IO.File]::WriteAllText($LauncherPath, $Launcher, [System.Text.UTF8Encoding]::new($false))
+
+    $NonAsciiBytes = [System.IO.File]::ReadAllBytes($LauncherPath) | Where-Object { $_ -gt 0x7F }
+    if ($NonAsciiBytes.Count -gt 0) {
+        throw "package-platform.ps1: generated hubcli.ps1 must contain ASCII bytes only"
+    }
+
+    $ParserTokens = $null
+    $ParserErrors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile(
+        $LauncherPath,
+        [ref]$ParserTokens,
+        [ref]$ParserErrors
+    ) | Out-Null
+    if ($ParserErrors.Count -gt 0) {
+        $ParserDetails = ($ParserErrors | ForEach-Object {
+            "line $($_.Extent.StartLineNumber): $($_.Message)"
+        }) -join "; "
+        throw "package-platform.ps1: generated hubcli.ps1 has parser errors: $ParserDetails"
+    }
 
     Remove-Item $Archive -Force -ErrorAction SilentlyContinue
     Push-Location $Stage

@@ -174,6 +174,17 @@ jobs:
           USERPROFILE: ${{ runner.temp }}\fake-home-windows
         run: |
           New-Item -ItemType Directory -Path $env:USERPROFILE -Force | Out-Null
+          $parserTokens = $null
+          $parserErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$env:PKG_DIR\hubcli.ps1",
+            [ref]$parserTokens,
+            [ref]$parserErrors
+          ) | Out-Null
+          if ($parserErrors.Count -gt 0) {
+            $parserErrors | Format-List
+            exit 1
+          }
           & "$env:PKG_DIR\hubcli.cmd" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$env:PKG_DIR\hubcli.cmd" --help
