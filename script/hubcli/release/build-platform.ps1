@@ -12,9 +12,14 @@ $OpenCodeDir = Join-Path $RepoRoot "packages/opencode"
 $Bun = (Get-Command bun -ErrorAction Stop).Source
 
 $Version = ""
-try {
-    $Version = (& git -C $RepoRoot describe --tags --exact-match --match "hubcli-v*" HEAD 2>$null).Trim()
-} catch {}
+$VersionTags = @(& git -C $RepoRoot tag --points-at HEAD --list "hubcli-v*")
+$GitExitCode = $LASTEXITCODE
+if ($GitExitCode -ne 0) {
+    throw "Version tag lookup failed with exit code $GitExitCode"
+}
+if ($VersionTags.Count -gt 0) {
+    $Version = $VersionTags[0].Trim()
+}
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = (Get-Content (Join-Path $RepoRoot "script/hubcli/VERSION") -Raw).Trim()
 }
@@ -25,7 +30,8 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 Write-Output "build-platform.ps1: target=$Target version=$Version"
 $env:HUBCLI_VERSION = $Version
 & $Bun run --cwd $OpenCodeDir script/build.ts "--target=$Target"
-if ($LASTEXITCODE -ne 0) { throw "OpenCode runtime build failed with exit code $LASTEXITCODE" }
+$RuntimeBuildExitCode = $LASTEXITCODE
+if ($RuntimeBuildExitCode -ne 0) { throw "OpenCode runtime build failed with exit code $RuntimeBuildExitCode" }
 
 $BuildDir = Join-Path $OpenCodeDir "dist/opencode-$Target/bin"
 $RuntimeSource = Join-Path $BuildDir "opencode.exe"
@@ -39,9 +45,14 @@ if (-not (Test-Path $RuntimeSource -PathType Leaf)) {
 
 Write-Output "build-platform.ps1: building hubcli-fast ($Target)..."
 & $Bun build --compile --minify --conditions=browser --target=bun-windows-x64 "--outfile=$FastOutput" $FastEntry
-if ($LASTEXITCODE -ne 0) { throw "hubcli-fast build failed with exit code $LASTEXITCODE" }
+$FastBuildExitCode = $LASTEXITCODE
+if ($FastBuildExitCode -ne 0) { throw "hubcli-fast build failed with exit code $FastBuildExitCode" }
 
 Move-Item -Path $RuntimeSource -Destination $RuntimeOutput -Force
 Write-Output "build-platform.ps1: done"
 Write-Output "  runtime: $RuntimeOutput"
 Write-Output "  fast:    $FastOutput"
+
+# GitHub's pwsh wrapper exits with the final native-process status.
+# Every native process above has been checked, so clear only validated state.
+$global:LASTEXITCODE = 0

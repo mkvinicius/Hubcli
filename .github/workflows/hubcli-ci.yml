@@ -91,7 +91,11 @@ jobs:
         shell: pwsh
         run: |
           & script/hubcli/release/build-platform.ps1 -Target ${{ matrix.target }}
+          $buildExitCode = $LASTEXITCODE
+          if ($buildExitCode -ne 0) { throw "build-platform.ps1 failed with exit code $buildExitCode" }
           & script/hubcli/release/package-platform.ps1 -Target ${{ matrix.target }} -OutDir dist-release
+          $packageExitCode = $LASTEXITCODE
+          if ($packageExitCode -ne 0) { throw "package-platform.ps1 failed with exit code $packageExitCode" }
 
       - uses: actions/upload-artifact@v4
         with:

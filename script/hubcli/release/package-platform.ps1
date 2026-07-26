@@ -22,9 +22,14 @@ foreach ($file in @($RuntimeBin, $FastBin)) {
 }
 
 $Version = ""
-try {
-    $Version = (& git -C $RepoRoot describe --tags --exact-match --match "hubcli-v*" HEAD 2>$null).Trim()
-} catch {}
+$VersionTags = @(& git -C $RepoRoot tag --points-at HEAD --list "hubcli-v*")
+$GitExitCode = $LASTEXITCODE
+if ($GitExitCode -ne 0) {
+    throw "Version tag lookup failed with exit code $GitExitCode"
+}
+if ($VersionTags.Count -gt 0) {
+    $Version = $VersionTags[0].Trim()
+}
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = (Get-Content (Join-Path $RepoRoot "script/hubcli/VERSION") -Raw).Trim()
 }
@@ -62,7 +67,14 @@ try {
     } finally {
         Pop-Location
     }
+    if (-not (Test-Path $Archive -PathType Leaf)) {
+        throw "package-platform.ps1: archive was not created: $Archive"
+    }
     Write-Output "package-platform.ps1: wrote $Archive"
 } finally {
     Remove-Item $Stage -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# GitHub's pwsh wrapper exits with the final native-process status.
+# Every native process above has been checked, so clear only validated state.
+$global:LASTEXITCODE = 0

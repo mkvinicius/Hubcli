@@ -66,6 +66,47 @@ function sha256(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex")
 }
 
+function createWindowsPackageFixture(initializeGit: boolean): {
+  root: string
+  packageScript: string
+  archive: string
+} {
+  const root = tmpdir("hubcli-windows-package-")
+  const releaseDir = path.join(root, "script", "hubcli", "release")
+  const buildDir = path.join(root, "packages", "opencode", "dist", "opencode-windows-x64", "bin")
+  fs.mkdirSync(releaseDir, { recursive: true })
+  fs.mkdirSync(buildDir, { recursive: true })
+
+  for (const file of ["package-platform.ps1", "hubcli.cmd", "hubcli.ps1", "README.txt.tmpl"]) {
+    fs.copyFileSync(path.join(REPO_ROOT, "script", "hubcli", "release", file), path.join(releaseDir, file))
+  }
+  fs.copyFileSync(path.join(REPO_ROOT, "LICENSE"), path.join(root, "LICENSE"))
+  fs.copyFileSync(path.join(REPO_ROOT, "script", "hubcli", "VERSION"), path.join(root, "script", "hubcli", "VERSION"))
+  fs.writeFileSync(path.join(buildDir, "hubcli-runtime.exe"), "fixture runtime\n")
+  fs.writeFileSync(path.join(buildDir, "hubcli-fast.exe"), "fixture fast path\n")
+
+  if (initializeGit) {
+    for (const args of [
+      ["init"],
+      ["config", "user.email", "hubcli-tests@example.invalid"],
+      ["config", "user.name", "HubCli Tests"],
+      ["add", "."],
+      ["commit", "-m", "fixture"],
+    ]) {
+      const result = runDetailed("git", ["-C", root, ...args])
+      if (result.status !== 0) {
+        throw new Error(`git ${args.join(" ")} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`)
+      }
+    }
+  }
+
+  return {
+    root,
+    packageScript: path.join(releaseDir, "package-platform.ps1"),
+    archive: path.join(root, "dist-release", "hubcli-windows-x64.zip"),
+  }
+}
+
 export function parseChecksumLines(text: string): Map<string, string> {
   const checksums = new Map<string, string>()
   for (const line of text.split(/\r?\n/)) {
@@ -344,9 +385,87 @@ describe("install.ps1", () => {
     const packaging = fs.readFileSync(PACKAGE_WINDOWS, "utf8")
     expect(build).toContain('[ValidateSet("windows-x64")]')
     expect(build).toContain("--target=bun-windows-x64")
+    expect(build).toContain("$RuntimeBuildExitCode = $LASTEXITCODE")
+    expect(build).toContain("$FastBuildExitCode = $LASTEXITCODE")
+    expect(build).toContain("$global:LASTEXITCODE = 0")
     expect(packaging).toContain("Compress-Archive")
     expect(packaging).toContain("hubcli.cmd")
     expect(packaging).toContain("hubcli.ps1")
+    expect(packaging).toContain("$GitExitCode = $LASTEXITCODE")
+    expect(packaging).toContain("$global:LASTEXITCODE = 0")
+  })
+
+  testWindows("package creation exits 0, contains only release files, and preserves external failures", () => {
+    const fixture = createWindowsPackageFixture(true)
+    const packaged = runDetailed("pwsh", [
+      "-NoProfile",
+      "-File",
+      fixture.packageScript,
+      "-Target",
+      "windows-x64",
+      "-OutDir",
+      "dist-release",
+    ])
+    if (packaged.status !== 0) {
+      throw new Error(`package-platform.ps1 exited ${packaged.status}\nstdout:\n${packaged.stdout}\nstderr:\n${packaged.stderr}`)
+    }
+    expect(packaged.status).toBe(0)
+    expect(fs.existsSync(fixture.archive)).toBe(true)
+
+    const extracted = tmpdir("hubcli-windows-package-extracted-")
+    const extractScript = path.join(extracted, "extract.ps1")
+    fs.writeFileSync(
+      extractScript,
+      "param([string]$Archive, [string]$Destination)\nExpand-Archive -LiteralPath $Archive -DestinationPath $Destination\n",
+    )
+    const extractDir = path.join(extracted, "contents")
+    const expanded = runDetailed("pwsh", [
+      "-NoProfile",
+      "-File",
+      extractScript,
+      "-Archive",
+      fixture.archive,
+      "-Destination",
+      extractDir,
+    ])
+    expect(expanded.status).toBe(0)
+
+    const files = fs
+      .readdirSync(extractDir, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => path.relative(extractDir, path.join(entry.parentPath, entry.name)).replaceAll("\\", "/"))
+      .sort()
+    expect(files).toEqual([
+      "hubcli-windows-x64/LICENSE",
+      "hubcli-windows-x64/README.txt",
+      "hubcli-windows-x64/hubcli-fast.exe",
+      "hubcli-windows-x64/hubcli-runtime.exe",
+      "hubcli-windows-x64/hubcli.cmd",
+      "hubcli-windows-x64/hubcli.ps1",
+    ])
+    expect(files.some((file) => /(^|\/)(?:\.git|node_modules|credentials\.env|auth\.json)(?:\/|$)/i.test(file))).toBe(
+      false,
+    )
+
+    const contents = files
+      .map((file) => fs.readFileSync(path.join(extractDir, file), "utf8"))
+      .join("\n")
+    expect(contents).not.toMatch(/(?:sk|nvapi)-[A-Za-z0-9_-]{20,}/)
+    expect(contents).not.toContain(["", "Users", "maikonviniciussilva"].join("/"))
+
+    const brokenFixture = createWindowsPackageFixture(false)
+    const failed = runDetailed("pwsh", [
+      "-NoProfile",
+      "-File",
+      brokenFixture.packageScript,
+      "-Target",
+      "windows-x64",
+      "-OutDir",
+      "dist-release",
+    ])
+    expect(failed.status).not.toBe(0)
+    expect(failed.stdout + failed.stderr).toContain("Version tag lookup failed with exit code")
+    expect(fs.existsSync(brokenFixture.archive)).toBe(false)
   })
 })
 
