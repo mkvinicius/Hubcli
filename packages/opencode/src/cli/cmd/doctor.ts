@@ -412,6 +412,7 @@ export function readConfig(): { config: HubcliConfig | null; error: string | nul
  */
 export async function testMcpServer(
   launcher: string = HUBCLI_LAUNCHER,
+  timeoutMs: number = 15_000,
 ): Promise<{ ok: boolean; tools: number; ms: number; error?: string }> {
   const { spawn } = await import("child_process")
   const start = Date.now()
@@ -430,8 +431,17 @@ export async function testMcpServer(
       proc.kill()
       resolve({ ...r, ms: Date.now() - start })
     }
-    const timer = setTimeout(() => finish({ ok: false, tools: 0, error: "timeout after 15s" }), 15_000)
+    const timer = setTimeout(
+      () => finish({ ok: false, tools: 0, error: `timeout after ${timeoutMs / 1000}s` }),
+      timeoutMs,
+    )
     proc.on("error", (e) => finish({ ok: false, tools: 0, error: sanitizeError(e.message).slice(0, 120) }))
+    proc.on("close", (code) => {
+      finish({ ok: false, tools: 0, error: `exited with code ${code ?? "unknown"} before tools/list` })
+    })
+    proc.stdin.on("error", (e) => {
+      finish({ ok: false, tools: 0, error: `stdin failed: ${sanitizeError(e.message).slice(0, 100)}` })
+    })
     proc.stdout.on("data", (chunk: Buffer) => {
       buffer += chunk.toString("utf8")
       for (const lineRaw of buffer.split("\n")) {

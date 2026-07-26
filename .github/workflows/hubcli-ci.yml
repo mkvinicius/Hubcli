@@ -186,13 +186,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$env:PKG_DIR\hubcli.cmd" --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          function Invoke-HubCliDiagnostic([string[]]$CommandArgs) {
+          function Invoke-HubCliDiagnostic(
+            [string[]]$CommandArgs,
+            [int[]]$AllowedExitCodes
+          ) {
             & "$env:PKG_DIR\hubcli.cmd" @CommandArgs
-            if ($LASTEXITCODE -notin @(0, 1, 2)) { exit $LASTEXITCODE }
+            $code = $LASTEXITCODE
+            if ($code -notin $AllowedExitCodes) {
+              throw "Unexpected exit code $code for: hubcli $($CommandArgs -join ' ')"
+            }
+            $global:LASTEXITCODE = 0
           }
-          Invoke-HubCliDiagnostic -CommandArgs @("profile", "list")
-          Invoke-HubCliDiagnostic -CommandArgs @("doctor")
-          Invoke-HubCliDiagnostic -CommandArgs @("doctor", "--mcp")
+          Invoke-HubCliDiagnostic -CommandArgs @("profile", "list") -AllowedExitCodes @(0)
+          Invoke-HubCliDiagnostic -CommandArgs @("doctor") -AllowedExitCodes @(0, 1, 2)
+          Invoke-HubCliDiagnostic -CommandArgs @("doctor", "--mcp") -AllowedExitCodes @(0, 1, 2, 4)
 
       - name: deterministic check — no personal/build-machine path leaked (Unix)
         if: runner.os != 'Windows'

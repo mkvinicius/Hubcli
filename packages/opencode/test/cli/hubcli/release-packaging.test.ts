@@ -17,6 +17,8 @@ const GENERATE_CHECKSUMS = path.join(REPO_ROOT, "script/hubcli/release/generate-
 const SECRET_SCAN = path.join(REPO_ROOT, "script/hubcli/release/scan-secrets.sh")
 const BUILD_WINDOWS = path.join(REPO_ROOT, "script/hubcli/release/build-platform.ps1")
 const PACKAGE_WINDOWS = path.join(REPO_ROOT, "script/hubcli/release/package-platform.ps1")
+const CI_WORKFLOW = path.join(REPO_ROOT, ".github", "workflows", "hubcli-ci.yml")
+const RELEASE_WORKFLOW = path.join(REPO_ROOT, ".github", "workflows", "hubcli-release.yml")
 
 const isWindows = process.platform === "win32"
 const testPosix = isWindows ? test.skip : test
@@ -384,6 +386,10 @@ describe("install.ps1", () => {
     const build = fs.readFileSync(BUILD_WINDOWS, "utf8")
     const packaging = fs.readFileSync(PACKAGE_WINDOWS, "utf8")
     const launcher = fs.readFileSync(path.join(REPO_ROOT, "script", "hubcli", "release", "hubcli.ps1"))
+    const posixLauncher = fs.readFileSync(
+      path.join(REPO_ROOT, "script", "hubcli", "release", "hubcli-dist-launcher.sh"),
+      "utf8",
+    )
     expect(build).toContain('[ValidateSet("windows-x64")]')
     expect(build).toContain("--target=bun-windows-x64")
     expect(build).toContain("$RuntimeBuildExitCode = $LASTEXITCODE")
@@ -397,6 +403,23 @@ describe("install.ps1", () => {
     expect(packaging).toContain("[System.Management.Automation.Language.Parser]::ParseFile")
     expect(packaging).toContain("[System.Text.UTF8Encoding]::new($false)")
     expect([...launcher].every((byte) => byte <= 0x7f)).toBe(true)
+    expect(launcher.toString("utf8")).toContain("$env:HUBCLI_LAUNCHER = $LauncherCmd")
+    expect(posixLauncher).toContain('HUBCLI_LAUNCHER="${_self}/hubcli"')
+  })
+
+  test("Windows package smoke tests use command-specific documented exit codes", () => {
+    for (const workflowPath of [CI_WORKFLOW, RELEASE_WORKFLOW]) {
+      const workflow = fs.readFileSync(workflowPath, "utf8")
+      expect(workflow).toContain('Invoke-HubCliDiagnostic -CommandArgs @("profile", "list") -AllowedExitCodes @(0)')
+      expect(workflow).toContain('Invoke-HubCliDiagnostic -CommandArgs @("doctor") -AllowedExitCodes @(0, 1, 2)')
+      expect(workflow).toContain(
+        'Invoke-HubCliDiagnostic -CommandArgs @("doctor", "--mcp") -AllowedExitCodes @(0, 1, 2, 4)',
+      )
+      expect(workflow).toContain("Unexpected exit code $code for: hubcli")
+      expect(workflow).toContain("$global:LASTEXITCODE = 0")
+      expect(workflow).not.toContain("-AllowedExitCodes @(0, 1, 2, 3, 4)")
+      expect(workflow).not.toMatch(/AllowedExitCodes[^\n]*(?:99|127)/)
+    }
   })
 
   testWindows("package creation exits 0, contains only release files, and preserves external failures", () => {

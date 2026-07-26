@@ -27,6 +27,7 @@ import {
   checkOpenCodeAuth,
   readFableCatalog,
   testFableConnection,
+  testMcpServer,
 } from "../../../src/cli/cmd/doctor"
 
 // ---------------------------------------------------------------------------
@@ -796,6 +797,34 @@ describe("testFableConnection (unit, stub launchers — no real API)", () => {
     const result = testFableConnection(launcher, 5_000)
     expect(result.ok).toBe(false)
     expect(result.error).toContain("exit 7")
+  })
+})
+
+describe("testMcpServer (unit, stub launchers)", () => {
+  function stubLauncher(script: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hubcli-mcp-launcher-test-"))
+    fixtureRoots.push(dir)
+    const launcher = path.join(dir, isWindows ? "hubcli.cmd" : "hubcli")
+    writeLauncher(launcher, script)
+    return launcher
+  }
+
+  test("process exit before tools/list fails immediately", async () => {
+    const launcher = stubLauncher(isWindows ? "@echo off\r\nexit /b 7\r\n" : "#!/bin/sh\nexit 7\n")
+    const started = Date.now()
+    const result = await testMcpServer(launcher, 5_000)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain("exit")
+    expect(Date.now() - started).toBeLessThan(2_000)
+  })
+
+  testPosix("indefinitely running process is killed at the configured timeout", async () => {
+    const launcher = stubLauncher("#!/bin/sh\nwhile :; do :; done\n")
+    const started = Date.now()
+    const result = await testMcpServer(launcher, 200)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain("timeout")
+    expect(Date.now() - started).toBeLessThan(2_000)
   })
 })
 

@@ -13,6 +13,7 @@ $HubcliCreds = Join-Path $HubcliHome "credentials.env"
 $HubcliVersion = "__HUBCLI_VERSION__"
 $RuntimeExe = Join-Path $HubcliBinDir "hubcli-runtime.exe"
 $FastExe = Join-Path $HubcliBinDir "hubcli-fast.exe"
+$LauncherCmd = Join-Path $HubcliBinDir "hubcli.cmd"
 $OriginalPwd = (Get-Location).Path
 
 # ---------------------------------------------------------------------------
@@ -58,6 +59,7 @@ $env:HUBCLI_BRAND = "1"
 $env:HUBCLI_VERSION = $HubcliVersion
 $env:HUBCLI_CALLER_PWD = $OriginalPwd
 $env:OPENCODE_CONFIG_DIR = $HubcliHome
+$env:HUBCLI_LAUNCHER = $LauncherCmd
 
 & $RuntimeExe @args
 exit $LASTEXITCODE

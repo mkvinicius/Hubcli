@@ -60,6 +60,20 @@ doctor            → OK, exit 0 (WARNs esperados por falta de credenciais)
 doctor --mcp      → OK, exit 0
 ```
 
+Contrato de códigos de saída do `doctor`:
+
+| Código | Significado | Comandos aplicáveis |
+|---|---|---|
+| 0 | verificações obrigatórias passaram | todos |
+| 1 | configuração ausente ou estruturalmente inválida | `doctor`, `doctor --mcp`, `doctor --all` |
+| 2 | permissões inseguras | `doctor`, `doctor --mcp`, `doctor --all` |
+| 3 | falha de conectividade com provider | `doctor --connect`, `doctor --all` |
+| 4 | servidor MCP não iniciou ou não completou o handshake | `doctor --mcp`, `doctor --all` |
+
+O smoke test do pacote usa allowlists por comando. `profile list` aceita somente
+0; `doctor` aceita 0, 1 e 2; `doctor --mcp` aceita 0, 1, 2 e 4. Códigos não
+documentados continuam falhando o job.
+
 Todos os comandos exigidos pela validação funcionaram normalmente mesmo com
 o path de build inacessível. Isso é a situação **C** do critério pedido: "o
 pacote executa com o path de build indisponível" — confirmada, não
