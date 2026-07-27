@@ -6,6 +6,7 @@ import * as Socket from "effect/unstable/socket/Socket"
 import path from "path"
 import { pathToFileURL } from "url"
 import { mkdir } from "fs/promises"
+import { Global } from "@opencode-ai/core/global"
 import { Location } from "@opencode-ai/core/location"
 import { Pty } from "@opencode-ai/core/pty"
 import { PtyTicket } from "@opencode-ai/core/pty/ticket"
@@ -56,6 +57,16 @@ const effectIt = testEffect(
 const directoryHeader = (dir: string) => HttpClientRequest.setHeader("x-opencode-directory", dir)
 
 const serverUrl = () => HttpServer.HttpServer.use((server) => Effect.succeed(HttpServer.formatAddress(server.address)))
+
+async function markPluginDependenciesReady() {
+  const dependencies = { "@opencode-ai/plugin": "test" }
+  await mkdir(path.join(Global.Path.config, "node_modules"), { recursive: true })
+  await Bun.write(path.join(Global.Path.config, "package.json"), JSON.stringify({ dependencies }))
+  await Bun.write(
+    path.join(Global.Path.config, "package-lock.json"),
+    JSON.stringify({ lockfileVersion: 3, packages: { "": { dependencies } } }),
+  )
+}
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -204,12 +215,13 @@ describe("v2 pty HttpApi", () => {
             JSON.stringify({ plugin: [pathToFileURL(plugin).href], formatter: false, lsp: false }),
           ),
         )
+        yield* Effect.promise(markPluginDependenciesReady)
 
         const created = yield* HttpClientRequest.post("/api/pty").pipe(
           directoryHeader(dir),
           HttpClientRequest.bodyJson({
             command: "/bin/sh",
-            args: ["-c", 'printf "%s|%s|%s|%s|%s\\n" "$CALLER" "$SHARED" "$PLUGIN" "$TERM" "$HOOK_CWD"; sleep 5'],
+            args: ["-c", 'printf "%s|%s|%s|%s|%s\\n" "$CALLER" "$SHARED" "$PLUGIN" "$TERM" "$HOOK_CWD"; sleep 60'],
             cwd,
             env: { CALLER: "caller", SHARED: "caller", TERM: "caller" },
           }),

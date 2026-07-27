@@ -1061,6 +1061,7 @@
     "@ai-sdk/xai@3.0.82": "patches/@ai-sdk%2Fxai@3.0.82.patch",
     "@tanstack/virtual-core@3.17.0": "patches/@tanstack%2Fvirtual-core@3.17.0.patch",
     "pacote@21.5.0": "patches/pacote@21.5.0.patch",
+    "bun-pty@0.4.8": "patches/bun-pty@0.4.8.patch",
   },
   "overrides": {
     "@opentui/core": "catalog:",

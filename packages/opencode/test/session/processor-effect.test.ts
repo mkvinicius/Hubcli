@@ -9,6 +9,7 @@ import path from "path"
 import z from "zod"
 import type { Agent } from "../../src/agent/agent"
 import { Provider } from "@/provider/provider"
+import { ProviderError } from "@/provider/error"
 
 import { Session } from "@/session/session"
 import { LLM } from "../../src/session/llm"
@@ -225,6 +226,36 @@ const fragmentFailureLLM = Layer.succeed(
 )
 const fragmentFailureEnv = LayerNode.compile(root, [...replacements, [LLM.node, fragmentFailureLLM]])
 const itFragmentFailure = testEffect(fragmentFailureEnv)
+
+let retryReasoningCalls = 0
+const retryReasoningLLM = Layer.succeed(
+  LLM.Service,
+  LLM.Service.of({
+    stream: () =>
+      Stream.unwrap(
+        Effect.sync(() => {
+          retryReasoningCalls += 1
+          if (retryReasoningCalls === 1) {
+            return Stream.make(
+              LLMEvent.stepStart({ index: 0 }),
+              LLMEvent.reasoningStart({ id: "reasoning-1" }),
+              LLMEvent.reasoningDelta({ id: "reasoning-1", text: "one" }),
+            ).pipe(Stream.concat(Stream.fail(new ProviderError.ResponseStreamError("retryable stream reset"))))
+          }
+          return Stream.make(
+            LLMEvent.stepStart({ index: 0 }),
+            LLMEvent.reasoningStart({ id: "reasoning-1" }),
+            LLMEvent.reasoningDelta({ id: "reasoning-1", text: "two" }),
+            LLMEvent.reasoningEnd({ id: "reasoning-1" }),
+            LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+            LLMEvent.finish({ reason: "stop" }),
+          )
+        }),
+      ),
+  }),
+)
+const retryReasoningEnv = LayerNode.compile(root, [...replacements, [LLM.node, retryReasoningLLM]])
+const itRetryReasoning = testEffect(retryReasoningEnv)
 
 const boot = Effect.fn("test.boot")(function* () {
   const processors = yield* SessionProcessor.Service
@@ -467,13 +498,12 @@ it.live("session.processor effect tests capture reasoning from http mock", () =>
   ),
 )
 
-it.live("session.processor effect tests reset reasoning state across retries", () =>
-  provideTmpdirServer(
-    ({ dir, llm }) =>
+itRetryReasoning.live("session.processor effect tests reset reasoning state across retries", () =>
+  provideTmpdirInstance(
+    (dir) =>
       Effect.gen(function* () {
         const { processors, session, provider } = yield* boot()
-
-        yield* llm.push(reply().reason("one").reset(), reply().reason("two").stop())
+        retryReasoningCalls = 0
 
         const chat = yield* session.create({})
         const parent = yield* user(chat.id, "reason")
@@ -506,11 +536,11 @@ it.live("session.processor effect tests reset reasoning state across retries", (
         const reasoning = parts.filter((part): part is SessionV1.ReasoningPart => part.type === "reasoning")
 
         expect(value).toBe("continue")
-        expect(yield* llm.calls).toBe(2)
+        expect(retryReasoningCalls).toBe(2)
         expect(reasoning.some((part) => part.text === "two")).toBe(true)
         expect(reasoning.some((part) => part.text === "onetwo")).toBe(false)
       }),
-    { config: (url) => providerCfg(url) },
+    { config: cfg },
   ),
 )
 

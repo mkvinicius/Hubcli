@@ -11,7 +11,7 @@ import { cliIt } from "../../lib/cli-process"
 describe("opencode run (non-interactive subprocess)", () => {
   // Happy path: prompt completes, output reaches stdout, process exits 0.
   // If this fails, all the others likely will too — debug here first.
-  cliIt.concurrent(
+  cliIt.live(
     "exits 0 and writes the response to stdout on a successful prompt",
     ({ llm, opencode }) =>
       Effect.gen(function* () {
@@ -23,7 +23,7 @@ describe("opencode run (non-interactive subprocess)", () => {
     60_000,
   )
 
-  cliIt.concurrent(
+  cliIt.live(
     "prints each completed text part in order around a tool continuation",
     ({ llm, opencode }) =>
       Effect.gen(function* () {
@@ -45,7 +45,7 @@ describe("opencode run (non-interactive subprocess)", () => {
     60_000,
   )
 
-  cliIt.concurrent(
+  cliIt.live(
     "prints reasoning before text only with --thinking",
     ({ llm, opencode }) =>
       Effect.gen(function* () {
@@ -65,9 +65,9 @@ describe("opencode run (non-interactive subprocess)", () => {
   // Regression for #27371: an unknown model used to hang the process forever
   // waiting on a session.status === idle event that never arrived. The fix
   // makes the SDK call surface an error promptly so the process exits nonzero.
-  // We assert nonzero exit AND wall-clock under the harness timeout — a hang
-  // would expire the timeout and produce a different (signal-killed) failure.
-  cliIt.concurrent(
+  // The harness reports a timeout as -1, so requiring the command's documented
+  // exit 1 proves this is the prompt rejection path rather than a killed hang.
+  cliIt.live(
     "exits nonzero promptly when the model is unknown (regression for #27371)",
     ({ opencode }) =>
       Effect.gen(function* () {
@@ -75,8 +75,7 @@ describe("opencode run (non-interactive subprocess)", () => {
           model: "test/nonexistent-model",
           timeoutMs: 15_000,
         })
-        expect(result.exitCode).not.toBe(0)
-        expect(result.durationMs).toBeLessThan(15_000)
+        opencode.expectExit(result, 1)
       }),
     30_000,
   )
@@ -84,7 +83,7 @@ describe("opencode run (non-interactive subprocess)", () => {
   // The test provider's SSE error item is interpreted by the SDK as an unknown
   // finish, not a fatal provider/session error. Lock that distinction in so it
   // is not accidentally used as the failure compatibility oracle.
-  cliIt.concurrent(
+  cliIt.live(
     "unknown stream finish preserves partial output and exits 0",
     ({ llm, opencode }) =>
       Effect.gen(function* () {
@@ -106,7 +105,7 @@ describe("opencode run (non-interactive subprocess)", () => {
   // --format json puts one JSON object per line on stdout for each emitted
   // event. Consumers (CI scripts, tooling) parse this stream. Asserts the
   // shape so a future event-emit change has to update this expectation.
-  cliIt.concurrent(
+  cliIt.live(
     "--format json emits parseable line-delimited JSON to stdout",
     ({ llm, opencode }) =>
       Effect.gen(function* () {
@@ -140,7 +139,7 @@ describe("opencode run (non-interactive subprocess)", () => {
     60_000,
   )
 
-  cliIt.concurrent(
+  cliIt.live(
     "--format json emits a pure error record for a rejected prompt request",
     ({ opencode }) =>
       Effect.gen(function* () {
@@ -149,7 +148,7 @@ describe("opencode run (non-interactive subprocess)", () => {
           format: "json",
         })
 
-        expect(result.exitCode).not.toBe(0)
+        opencode.expectExit(result, 1)
         const events = opencode.parseJsonEvents(result.stdout)
         expect(events.map((event) => event.type)).toEqual(["error"])
         expect(events[0]).toEqual({
@@ -163,7 +162,7 @@ describe("opencode run (non-interactive subprocess)", () => {
     30_000,
   )
 
-  cliIt.concurrent(
+  cliIt.live(
     "--format json preserves reasoning, tool, and continuation ordering",
     ({ llm, opencode }) =>
       Effect.gen(function* () {
@@ -212,7 +211,7 @@ describe("opencode run (non-interactive subprocess)", () => {
     60_000,
   )
 
-  cliIt.concurrent(
+  cliIt.live(
     "--format json records partial output for an unknown stream finish",
     ({ llm, opencode }) =>
       Effect.gen(function* () {
@@ -241,7 +240,7 @@ describe("opencode run (non-interactive subprocess)", () => {
     60_000,
   )
 
-  cliIt.concurrent(
+  cliIt.live(
     "rejects requested permissions by default and allows them with the dangerous flag",
     ({ home, llm, opencode }) =>
       Effect.gen(function* () {
@@ -299,7 +298,7 @@ describe("opencode run (non-interactive subprocess)", () => {
     60_000,
   )
 
-  cliIt.concurrent(
+  cliIt.live(
     "attach mode rejects local directories before prompt admission",
     ({ home, opencode }) =>
       Effect.gen(function* () {
