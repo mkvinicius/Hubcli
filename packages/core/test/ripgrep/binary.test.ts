@@ -76,9 +76,14 @@ describe("RipgrepBinary", () => {
 
             const result = yield* (yield* AppProcess.Service)
               .run(
-                ChildProcess.make(process.platform === "win32" ? "tar.exe" : "tar", ["-xf", archive, "-C", directory], {
-                  stdin: "ignore",
-                }),
+                ChildProcess.make(
+                  process.platform === "win32" ? "tar.exe" : "tar",
+                  ["-xf", path.basename(archive), "-C", directory],
+                  {
+                    cwd: root,
+                    stdin: "ignore",
+                  },
+                ),
                 { timeout: "5 seconds" },
               )
               .pipe(Effect.flatMap(AppProcess.requireSuccess))

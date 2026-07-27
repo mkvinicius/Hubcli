@@ -47,6 +47,7 @@ async function observe(
   iteration: number,
   stdio: "pipe" | "overlapped",
   env?: NodeJS.ProcessEnv,
+  cwd?: string,
 ) {
   const directory = path.join(root, `${name} ${iteration}`)
   const marker = path.join(directory, "extraction-complete")
@@ -58,6 +59,7 @@ async function observe(
   const stdout: Buffer[] = []
   const stderr: Buffer[] = []
   const child = spawn(command, args, {
+    cwd,
     env,
     stdio: ["ignore", stdio, stdio],
     windowsHide: true,
@@ -128,6 +130,7 @@ async function observe(
       timestamp: new Date().toISOString(),
       command,
       args,
+      cwd,
       stdio,
       pid: child.pid,
       events,
@@ -180,7 +183,15 @@ try {
       }
       if (tar) {
         const name = `tar-${stdio}`
-        await observe(name, tar, ["-xf", archive, "-C", path.join(root, `${name} ${iteration}`)], iteration, stdio)
+        await observe(
+          name,
+          tar,
+          ["-xf", path.basename(archive), "-C", path.join(root, `${name} ${iteration}`)],
+          iteration,
+          stdio,
+          undefined,
+          path.dirname(archive),
+        )
       }
     }
   }

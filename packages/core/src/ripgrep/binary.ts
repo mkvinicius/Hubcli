@@ -102,9 +102,14 @@ export namespace RipgrepBinary {
       const appProcess = yield* AppProcess.Service
       const flock = yield* EffectFlock.Service
 
-      const run = Effect.fnUntraced(function* (command: string, args: string[], timeout: Duration.Input) {
+      const run = Effect.fnUntraced(function* (
+        command: string,
+        args: string[],
+        timeout: Duration.Input,
+        cwd?: string,
+      ) {
         const result = yield* appProcess
-          .run(ChildProcess.make(command, args, { extendEnv: true, stdin: "ignore" }), {
+          .run(ChildProcess.make(command, args, { cwd, extendEnv: true, stdin: "ignore" }), {
             timeout,
             maxOutputBytes: MAX_PROCESS_OUTPUT_BYTES,
             maxErrorBytes: MAX_PROCESS_OUTPUT_BYTES,
@@ -134,7 +139,7 @@ export namespace RipgrepBinary {
         if (config.extension === "zip") {
           const tar = findOnPath("tar.exe")
           if (!tar) return yield* Effect.fail(new Error("tar.exe is required to extract ripgrep on Windows"))
-          yield* run(tar, ["-xf", archive, "-C", directory], "30 seconds")
+          yield* run(tar, ["-xf", path.basename(archive), "-C", directory], "30 seconds", path.dirname(archive))
         } else {
           const tar = findOnPath(hostPlatform === "win32" ? "tar.exe" : "tar") ?? "tar"
           yield* run(tar, ["-xzf", archive, "-C", directory], "30 seconds")
