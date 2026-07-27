@@ -90,6 +90,22 @@ describe("cross-spawn spawner", () => {
     )
 
     fx.effect(
+      "does not lose immediate exit events",
+      Effect.gen(function* () {
+        const codes = yield* Effect.all(
+          Array.from({ length: 20 }, () =>
+            Effect.gen(function* () {
+              const handle = yield* js("process.exit(0)")
+              return yield* handle.exitCode
+            }),
+          ),
+          { concurrency: "unbounded" },
+        )
+        expect(codes).toEqual(Array.from({ length: 20 }, () => ChildProcessSpawner.ExitCode(0)))
+      }),
+    )
+
+    fx.effect(
       "returns non-zero exit code",
       Effect.gen(function* () {
         const handle = yield* js("process.exit(42)")

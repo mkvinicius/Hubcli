@@ -93,10 +93,6 @@ export namespace RipgrepBinary {
     return typeof result === "string" ? result : undefined
   }
 
-  function powershellLiteral(value: string) {
-    return `'${value.replaceAll("'", "''")}'`
-  }
-
   const layer = Layer.effect(
     Service,
     Effect.gen(function* () {
@@ -136,14 +132,9 @@ export namespace RipgrepBinary {
         hostPlatform: string,
       ) {
         if (config.extension === "zip") {
-          const shell = findOnPath("powershell.exe") ?? findOnPath("pwsh.exe")
-          if (!shell) return yield* Effect.fail(new Error("PowerShell is required to extract ripgrep on Windows"))
-          const script = [
-            "$ErrorActionPreference = 'Stop'",
-            "Add-Type -AssemblyName System.IO.Compression.FileSystem",
-            `[System.IO.Compression.ZipFile]::ExtractToDirectory(${powershellLiteral(archive)}, ${powershellLiteral(directory)})`,
-          ].join("; ")
-          yield* run(shell, ["-NoProfile", "-NonInteractive", "-Command", script], "30 seconds")
+          const tar = findOnPath("tar.exe")
+          if (!tar) return yield* Effect.fail(new Error("tar.exe is required to extract ripgrep on Windows"))
+          yield* run(tar, ["-xf", archive, "-C", directory], "30 seconds")
         } else {
           const tar = findOnPath(hostPlatform === "win32" ? "tar.exe" : "tar") ?? "tar"
           yield* run(tar, ["-xzf", archive, "-C", directory], "30 seconds")

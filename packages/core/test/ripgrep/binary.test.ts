@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test"
+import fs from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { Effect } from "effect"
+import { ChildProcess } from "effect/unstable/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { AppProcess } from "@opencode-ai/core/process"
 import { RipgrepBinary } from "@opencode-ai/core/ripgrep/binary"
+import { EXECUTABLE, bytes } from "../fixture/ripgrep-windows-archive"
+import { testEffect } from "../lib/effect"
+
+const it = testEffect(LayerNode.compile(AppProcess.node))
 
 describe("RipgrepBinary", () => {
   test("maps every supported host to the official release asset", () => {
@@ -49,4 +60,37 @@ describe("RipgrepBinary", () => {
       expect(item.sha256).toMatch(/^[a-f0-9]{64}$/)
     }
   })
+
+  it.live(
+    "extracts the Windows ZIP with tar and captures process completion",
+    () => {
+      if (process.platform !== "win32" && process.platform !== "darwin") return Effect.void
+      return Effect.acquireUseRelease(
+        Effect.promise(() => fs.mkdtemp(path.join(os.tmpdir(), "opencode ripgrep archive "))),
+        (root) =>
+          Effect.gen(function* () {
+            const archive = path.join(root, "archive with spaces.zip")
+            const directory = path.join(root, "destination with spaces")
+            yield* Effect.promise(() => fs.writeFile(archive, bytes()))
+            yield* Effect.promise(() => fs.mkdir(directory))
+
+            const result = yield* (yield* AppProcess.Service)
+              .run(
+                ChildProcess.make(process.platform === "win32" ? "tar.exe" : "tar", ["-xf", archive, "-C", directory], {
+                  stdin: "ignore",
+                }),
+                { timeout: "5 seconds" },
+              )
+              .pipe(Effect.flatMap(AppProcess.requireSuccess))
+
+            expect(result.exitCode).toBe(0)
+            expect(
+              (yield* Effect.promise(() => fs.stat(path.join(directory, ...EXECUTABLE.split("/"))))).isFile(),
+            ).toBe(true)
+          }),
+        (root) => Effect.promise(() => fs.rm(root, { recursive: true, force: true })),
+      )
+    },
+    10_000,
+  )
 })
