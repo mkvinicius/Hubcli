@@ -439,7 +439,8 @@ export async function testMcpServer(
     proc.on("close", (code) => {
       finish({ ok: false, tools: 0, error: `exited with code ${code ?? "unknown"} before tools/list` })
     })
-    proc.stdin.on("error", (e) => {
+    proc.stdin.on("error", (e: NodeJS.ErrnoException) => {
+      if (e.code === "EPIPE") return
       finish({ ok: false, tools: 0, error: `stdin failed: ${sanitizeError(e.message).slice(0, 100)}` })
     })
     proc.stdout.on("data", (chunk: Buffer) => {
