@@ -75,6 +75,11 @@ export namespace RipgrepBinary {
     return checksum(bytes) === expected
   }
 
+  export function windowsTarPath(env: NodeJS.ProcessEnv) {
+    if (!env.SystemRoot) return
+    return path.win32.join(env.SystemRoot, "System32", "tar.exe")
+  }
+
   function asError(cause: unknown) {
     return cause instanceof Error ? cause : new Error(String(cause))
   }
@@ -137,8 +142,17 @@ export namespace RipgrepBinary {
         hostPlatform: string,
       ) {
         if (config.extension === "zip") {
-          const tar = findOnPath("tar.exe")
-          if (!tar) return yield* Effect.fail(new Error("tar.exe is required to extract ripgrep on Windows"))
+          const tar = windowsTarPath(process.env)
+          if (!tar)
+            return yield* Effect.fail(
+              new Error(
+                "Cannot extract ripgrep ZIP: SystemRoot is not set; expected native Windows tar.exe at %SystemRoot%\\System32\\tar.exe",
+              ),
+            )
+          if (!(yield* fs.isFile(tar)))
+            return yield* Effect.fail(
+              new Error(`Cannot extract ripgrep ZIP: native Windows tar.exe was not found at ${tar}`),
+            )
           yield* run(tar, ["-xf", path.basename(archive), "-C", directory], "30 seconds", path.dirname(archive))
         } else {
           const tar = findOnPath(hostPlatform === "win32" ? "tar.exe" : "tar") ?? "tar"

@@ -61,8 +61,21 @@ describe("RipgrepBinary", () => {
     }
   })
 
+  test("selects native Windows tar even when Git tar appears first on PATH", () => {
+    const systemRoot = String.raw`C:\Windows`
+    const git = String.raw`C:\Program Files\Git\usr\bin`
+    const gitTar = path.win32.join(git, "tar.exe")
+    const tar = RipgrepBinary.windowsTarPath({
+      SystemRoot: systemRoot,
+      PATH: `${git};${path.win32.join(systemRoot, "System32")}`,
+    })
+
+    expect(tar).not.toBe(gitTar)
+    expect(tar).toBe(path.win32.join(systemRoot, "System32", "tar.exe"))
+  })
+
   it.live(
-    "extracts the Windows ZIP with tar and captures process completion",
+    "extracts the Windows ZIP with the platform tar and captures process completion",
     () => {
       if (process.platform !== "win32" && process.platform !== "darwin") return Effect.void
       return Effect.acquireUseRelease(
@@ -74,16 +87,15 @@ describe("RipgrepBinary", () => {
             yield* Effect.promise(() => fs.writeFile(archive, bytes()))
             yield* Effect.promise(() => fs.mkdir(directory))
 
+            const tar = process.platform === "win32" ? RipgrepBinary.windowsTarPath(process.env) : "tar"
+            if (!tar) return yield* Effect.fail(new Error("platform tar is required for the offline ZIP test"))
+
             const result = yield* (yield* AppProcess.Service)
               .run(
-                ChildProcess.make(
-                  process.platform === "win32" ? "tar.exe" : "tar",
-                  ["-xf", path.basename(archive), "-C", directory],
-                  {
-                    cwd: root,
-                    stdin: "ignore",
-                  },
-                ),
+                ChildProcess.make(tar, ["-xf", path.basename(archive), "-C", directory], {
+                  cwd: root,
+                  stdin: "ignore",
+                }),
                 { timeout: "5 seconds" },
               )
               .pipe(Effect.flatMap(AppProcess.requireSuccess))
