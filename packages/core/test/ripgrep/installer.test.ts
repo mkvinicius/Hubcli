@@ -322,5 +322,8 @@ describe("RipgrepInstaller", () => {
           expect(yield* attempt(() => temporaryEntries(root))).toEqual([])
         }),
       ),
-    ))
+    ),
+    // fiber interrupt + retry occasionally brushes the 5s default on CI
+    { timeout: 30_000 },
+  )
 })

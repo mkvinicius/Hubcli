@@ -63,6 +63,19 @@ jobs:
             turbo-${{ runner.os }}-${{ hashFiles('turbo.json', '**/package.json') }}-
             turbo-${{ runner.os }}-
 
+      - name: Redirect Windows temp to the workspace drive
+        # GitHub-hosted Windows runners keep the workspace on D: but TEMP on
+        # C:. Drive-relative paths (\foo\bar) resolve against the current
+        # drive, so cross-drive temp dirs break path-normalization tests that
+        # pass on same-drive runners. Use D:\tmp rather than RUNNER_TEMP
+        # (D:\a\_temp): a single-letter first component like \a\ would be
+        # read as an MSYS drive prefix by FSUtil.windowsPath.
+        if: runner.os == 'Windows'
+        run: |
+          drive="${GITHUB_WORKSPACE:0:2}"
+          mkdir -p "${drive}/tmp"
+          printf 'TEMP=%s\\tmp\nTMP=%s\\tmp\n' "$drive" "$drive" >> "$GITHUB_ENV"
+
       - name: Run unit tests
         # Windows runs the suite ~2.5x slower than Linux (opencode:test alone
         # projects to ~23 minutes), so 20 minutes cannot fit the full run.
