@@ -1,7 +1,7 @@
 # Início rápido
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/dev/install.sh | bash
 
 hubcli --version
 hubcli doctor            # providers ausentes aparecem como WARN, nunca crash

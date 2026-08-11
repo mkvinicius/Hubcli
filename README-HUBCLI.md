@@ -18,7 +18,7 @@ HubCli é um fork do [OpenCode](https://github.com/anomalyco/opencode) com curad
 **Sem precisar de Git nem Bun** (macOS/Linux):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/dev/install.sh | bash
 ```
 
 Windows (PowerShell):

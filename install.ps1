@@ -108,12 +108,25 @@ if ($Check) {
 # ---------------------------------------------------------------------------
 if ([string]::IsNullOrEmpty($Version)) {
     Write-Output "Resolving latest release..."
+    # /releases/latest only returns the newest non-prerelease, non-draft
+    # release and 404s when a repo has shipped only prereleases so far (e.g.
+    # every hubcli-v*-rc.N release to date). Fall back to /releases (all
+    # releases, newest first) so the default install flow keeps working
+    # before the first stable tag exists.
     try {
         $release = Invoke-RestMethod -Uri "$GitHubApi/releases/latest"
         $Version = $release.tag_name
     } catch {
-        Write-Error "Could not resolve the latest release from GitHub. Pass -Version explicitly."
-        exit 1
+        try {
+            $releases = Invoke-RestMethod -Uri "$GitHubApi/releases"
+            if ($releases.Count -gt 0) { $Version = $releases[0].tag_name }
+        } catch {
+            $Version = $null
+        }
+        if ([string]::IsNullOrEmpty($Version)) {
+            Write-Error "Could not resolve the latest release from GitHub. Pass -Version explicitly."
+            exit 1
+        }
     }
 }
 Write-Output "Version: $Version"

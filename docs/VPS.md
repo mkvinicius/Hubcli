@@ -10,7 +10,7 @@ verificado.
 
 ```bash
 ssh user@vps
-curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/dev/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"   # se o instalador avisar que não está no PATH
 hubcli --version
 hubcli doctor

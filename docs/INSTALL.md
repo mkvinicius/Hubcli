@@ -3,7 +3,7 @@
 ## macOS / Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/dev/install.sh | bash
 ```
 
 Ou, via GitHub Release (depois que uma release existir):
@@ -15,7 +15,7 @@ curl -fsSL https://github.com/mkvinicius/Hubcli/releases/latest/download/install
 **Alternativa mais segura** — baixar, inspecionar e só então rodar:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/dev/install.sh -o install.sh
 less install.sh          # leia antes de executar
 bash install.sh
 ```
@@ -33,7 +33,7 @@ irm https://github.com/mkvinicius/Hubcli/releases/latest/download/install.ps1 | 
 Alternativa segura (baixar e inspecionar primeiro):
 
 ```powershell
-irm https://raw.githubusercontent.com/mkvinicius/Hubcli/main/install.ps1 -OutFile install.ps1
+irm https://raw.githubusercontent.com/mkvinicius/Hubcli/dev/install.ps1 -OutFile install.ps1
 notepad install.ps1
 powershell -File install.ps1
 ```

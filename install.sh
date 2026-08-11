@@ -2,7 +2,7 @@
 # =============================================================================
 # HubCli installer — macOS / Linux
 #
-#   curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/dev/install.sh | bash
 #
 # Installs HubCli without requiring Git or Bun: downloads a prebuilt
 # platform archive + checksums from the official GitHub repository, verifies
@@ -126,7 +126,18 @@ resolve_latest_version() {
   if ! command -v curl >/dev/null 2>&1; then
     abort "curl is required to resolve the latest release (or pass --version explicitly)"
   fi
-  curl -fsSL "${GITHUB_API}/releases/latest" 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/'
+  # GitHub's /releases/latest endpoint only ever returns the newest
+  # non-prerelease, non-draft release — it 404s when a repo has shipped only
+  # prereleases so far (e.g. every hubcli-v*-rc.N release to date). Fall back
+  # to /releases (all releases, newest first) so the default curl-pipe-bash
+  # flow keeps working before the first stable tag exists.
+  local version
+  version="$(curl -fsSL "${GITHUB_API}/releases/latest" 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+  if [ -n "$version" ]; then
+    printf '%s\n' "$version"
+    return 0
+  fi
+  curl -fsSL "${GITHUB_API}/releases" 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/'
 }
 
 if [ -z "$REQUESTED_VERSION" ]; then
