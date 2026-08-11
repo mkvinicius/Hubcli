@@ -2,6 +2,23 @@
 
 Registro das mudanças do fork sobre o OpenCode. Formato reverso-cronológico.
 
+## v0.1.0-rc.5 (2026-08-11)
+
+Distribuição multiplataforma pronta para produção — instalador de um comando, CI e release publicados de ponta a ponta.
+
+### Recursos
+
+- **`install.sh` / `install.ps1`**: instalação sem Git nem Bun em macOS, Linux e Windows — download do artefato oficial do GitHub Releases, verificação de checksum SHA-256 (aborta sem instalar nada se não bater), instalação atômica com backup e rollback automático, preservação de `~/.hubcli` (config/credenciais/perfis), `--check`/`--repair`/`--dry-run`/`--uninstall`.
+- **5 artefatos multiplataforma**: `hubcli-darwin-x64`, `hubcli-darwin-arm64`, `hubcli-linux-x64`, `hubcli-linux-arm64`, `hubcli-windows-x64` — build real via cross-compilação nativa do Bun, empacotados com `hubcli`/`hubcli-runtime`/`hubcli-fast` + LICENSE + README.txt, sem `.git`/`node_modules`/segredos.
+- **CI e release automatizados** (`.github/workflows/hubcli-ci.yml`, `hubcli-release.yml`): jobs `verify-package` rodam em runner limpo, sem checkout do repositório — prova estrutural de que o pacote não depende do repo/Bun/Git/paths de build. Release real dispara só por tag `hubcli-v*`; modo dry-run via `workflow_dispatch` (`publish=false`) valida tudo sem publicar.
+- **Validado de ponta a ponta em CI real**: darwin-x64/arm64, linux-x64/arm64 e windows-x64 — build, empacotamento e smoke test (`--version`/`--help`/`profile list`/`doctor`/`doctor --mcp`) todos verdes em runners reais do GitHub Actions.
+
+### Correções
+
+- Path de build pessoal investigado a fundo (dependência transitiva `pino`/`thread-stream`, usada só pelo provider GitLab não suportado pelo HubCli) — comprovado que não afeta nenhum comando suportado; releases devem sempre vir de CI (path genérico do runner), nunca de build local. Detalhes em `docs/SECURITY.md`.
+- `test/tool/shell.test.ts`: teste de permissão de path relativo a drive no Windows tinha o drive `C:` fixo no código; CI redireciona `TEMP` para o drive do workspace (pode ser `D:`), quebrando o teste — corrigido para derivar o drive dinamicamente.
+- `script/hubcli/release/generate-checksums.sh`: `cd "$OUT_DIR"` quebrava o path do arquivo de checksums quando `$OUT_DIR` era relativo (ex.: `dist-release`, exatamente o que o workflow de release passa) — corrigido resolvendo para path absoluto antes do `cd`.
+
 ## v0.1.0-rc.4 (2026-07-08, pendente de tag/commit)
 
 Runtime compilado e versionamento single-source.
