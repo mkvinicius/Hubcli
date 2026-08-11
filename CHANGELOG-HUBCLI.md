@@ -2,6 +2,14 @@
 
 Registro das mudanças do fork sobre o OpenCode. Formato reverso-cronológico.
 
+## v0.1.0-rc.7 (2026-08-11)
+
+Terceira cópia do logo antigo, esquecida na rc.6.
+
+### Correções
+
+- `packages/opencode/src/cli/ui.ts`: o `wordmark` usado no `--help` real (modo não-TTY) tinha sua própria cópia hardcoded do desenho antigo — não foi pega na rc.6 porque essa troca só cobriu `packages/tui/src/logo.ts`, `packages/tui/src/util/presentation.ts` e `fast.ts`. Confirmado por teste real (`hubcli --help` instalado da rc.6 ainda mostrava o logo velho). Agora usa a mesma fonte de blocos sólidos. Auditoria final: nenhuma outra ocorrência do desenho antigo restante no código.
+
 ## v0.1.0-rc.6 (2026-08-11)
 
 Ajustes de legibilidade visual e um resíduo de branding não substituído.

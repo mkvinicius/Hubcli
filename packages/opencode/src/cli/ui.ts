@@ -5,10 +5,11 @@ import { logo as glyphs } from "./logo"
 // Wordmark is brand-conditional: HubCli only when HUBCLI_BRAND=1 (launcher).
 const wordmark = process.env["HUBCLI_BRAND"]
   ? [
-      `                        `,
-      `█  █ █  █ █▀▀█ █▀▀ █   █`,
-      `█▀▀█ █  █ █▀▀▄ █   █   █`,
-      `▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀ ▀▀▀ ▀`,
+      `█ █ █ █ ███   ██ █   ███`,
+      `█ █ █ █ █  █ █   █    █ `,
+      `███ █ █ ███  █   █    █ `,
+      `█ █ █ █ █  █ █   █    █ `,
+      `█ █ ███ ███   ██ ███ ███`,
       `Seu hub multi-LLM para programação no terminal.`,
     ]
   : [
