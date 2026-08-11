@@ -432,6 +432,14 @@ describe("tool.shell permissions", () => {
           item,
           Effect.gen(function* () {
             const tmp = yield* tmpdirScoped()
+            // Drive-relative PowerShell paths (e.g. "C:foo") resolve against
+            // whatever drive the process's CWD is on — hardcoding "C:" only
+            // worked while CI temp dirs happened to live on C:. GitHub's
+            // hosted Windows runners now redirect TEMP to the workspace
+            // drive (see .github/workflows/test.yml, "Redirect Windows temp
+            // to the workspace drive"), which can be D: — so derive the
+            // drive letter from the actual tmp path instead.
+            const drive = tmp.slice(0, 2)
             yield* runIn(
               tmp,
               Effect.gen(function* () {
@@ -440,7 +448,7 @@ describe("tool.shell permissions", () => {
                 expect(
                   yield* fail(
                     {
-                      command: 'Get-Content "C:../outside.txt"',
+                      command: `Get-Content "${drive}../outside.txt"`,
                     },
                     capture(requests, err),
                   ),
