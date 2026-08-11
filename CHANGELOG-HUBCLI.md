@@ -2,6 +2,15 @@
 
 Registro das mudanças do fork sobre o OpenCode. Formato reverso-cronológico.
 
+## v0.1.0-rc.6 (2026-08-11)
+
+Ajustes de legibilidade visual e um resíduo de branding não substituído.
+
+### Correções
+
+- **Logo redesenhado**: substituído o wordmark em meio-blocos com sombreado fino (difícil de ler em vários terminais) por uma fonte de blocos sólidos maiores — aplicado no TUI, no epílogo de sessão e no `--help` do binário rápido.
+- **`tui.ts`**: a descrição do argumento posicional `project` ("path to start opencode in") não usava a constante `${BRAND}` que o resto do arquivo já usa — corrigido para "path to start HubCli in" (e a cópia estática equivalente em `fast.ts`).
+
 ## v0.1.0-rc.5 (2026-08-11)
 
 Distribuição multiplataforma pronta para produção — instalador de um comando, CI e release publicados de ponta a ponta.

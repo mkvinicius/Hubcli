@@ -139,10 +139,11 @@ function credsFileVariables(): Set<string> {
 }
 
 function showHelp() {
-  process.stderr.write(`                        
-█  █ █  █ █▀▀█ █▀▀ █   █
-█▀▀█ █  █ █▀▀▄ █   █   █
-▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀ ▀▀▀ ▀
+  process.stderr.write(`█ █ █ █ ███   ██ █   ███
+█ █ █ █ █  █ █   █    █
+███ █ █ ███  █   █    █
+█ █ █ █ █  █ █   █    █
+█ █ ███ ███   ██ ███ ███
 Seu hub multi-LLM para programação no terminal.
 
 Commands:
@@ -175,7 +176,7 @@ Commands:
   hubcli auth <subcommand>         credential status for HubCli providers (values never shown)
 
 Positionals:
-  project  path to start opencode in                                                        [string]
+  project  path to start HubCli in                                                           [string]
 
 Options:
   -h, --help          show help                                                            [boolean]
