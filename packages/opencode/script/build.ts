@@ -23,6 +23,12 @@ const skipInstall = process.argv.includes("--skip-install")
 const sourcemapsFlag = process.argv.includes("--sourcemaps")
 const plugin = createSolidTransformPlugin()
 const skipEmbedWebUi = process.argv.includes("--skip-embed-web-ui")
+const buildVersion = process.env.HUBCLI_VERSION || Script.version
+// --target=<os>-<arch> cross-compiles the default (non-baseline, glibc) variant
+// for one specific platform, without needing the full --single (current
+// platform only) or the unfiltered all-targets matrix. "windows" is accepted
+// as an alias for Bun/Node's "win32" os identifier.
+const targetFlag = process.argv.find((arg) => arg.startsWith("--target="))?.slice("--target=".length)
 
 const createEmbeddedWebUIBundle = async () => {
   console.log(`Building Web UI to embed in the binary`)
@@ -132,7 +138,18 @@ const targets = singleFlag
 
       return true
     })
-  : allTargets
+  : targetFlag
+    ? allTargets.filter((item) => {
+        const wantOs = targetFlag.split("-")[0] === "windows" ? "win32" : targetFlag.split("-")[0]
+        const wantArch = targetFlag.split("-")[1]
+        return item.os === wantOs && item.arch === wantArch && item.avx2 !== false && item.abi === undefined
+      })
+    : allTargets
+
+if (targetFlag && targets.length === 0) {
+  console.error(`No matching build target for --target=${targetFlag}. Expected <os>-<arch>, e.g. darwin-arm64, linux-x64, windows-x64.`)
+  process.exit(1)
+}
 
 await $`rm -rf dist`
 
@@ -181,14 +198,14 @@ for (const item of targets) {
       autoloadPackageJson: true,
       target: name.replace(pkg.name, "bun") as any,
       outfile: `dist/${name}/bin/opencode`,
-      execArgv: [`--user-agent=opencode/${Script.version}`, "--use-system-ca", "--"],
+      execArgv: [`--user-agent=opencode/${buildVersion}`, "--use-system-ca", "--"],
       windows: {},
     },
     files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},
     entrypoints: ["./src/index.ts", parserWorker, workerPath, ...(embeddedFileMap ? ["opencode-web-ui.gen.ts"] : [])],
     define: {
       FFF_LIBC: JSON.stringify(item.abi === "musl" ? "musl" : "gnu"),
-      OPENCODE_VERSION: `'${Script.version}'`,
+      OPENCODE_VERSION: `'${buildVersion}'`,
       OPENCODE_MODELS_DEV: generated.modelsData,
       OTUI_TREE_SITTER_WORKER_PATH: bunfsRoot + workerRelativePath,
       OPENCODE_WORKER_PATH: workerPath,

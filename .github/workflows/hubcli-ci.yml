@@ -1,0 +1,260 @@
+# HubCli CI — separate from OpenCode's own upstream workflows (test.yml,
+# typecheck.yml, publish.yml, etc.) so that future `hubcli maintenance sync`
+# merges from upstream/dev never conflict on filename. Only exercises
+# HubCli-added code paths (hubcli/, doctor, MCP, profiles) plus the shared
+# opencode/tui typechecks.
+#
+# AUTHORED IN THIS SESSION, NOT YET RUN ON A REAL GITHUB ACTIONS RUNNER —
+# there was no CI access available (no push was made to trigger it). Review
+# the matrix and steps before relying on it; treat as a draft until it has
+# gone green at least once.
+#
+# Two-job design per platform:
+#   build   — checks out the repo, builds + packages (script/hubcli/release/),
+#             uploads the packaged archive as an artifact.
+#   verify  — a SEPARATE job/runner that does NOT check out the repository at
+#             all. It only downloads the artifact from `build` and runs the
+#             extracted binaries. Because it is a fresh VM with no checkout,
+#             this is a structural (not just behavioral) proof that the
+#             package does not depend on the repo, node_modules, Bun, Git, or
+#             any path from the build runner — if it did, `verify` would fail
+#             outright (file not found / command not found), not just print
+#             a warning.
+name: hubcli-ci
+
+on:
+  push:
+    branches: [integration/upstream-20260702]
+  pull_request:
+    branches: [integration/upstream-20260702]
+  workflow_dispatch: {}
+
+concurrency:
+  group: hubcli-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck-and-unit-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install
+      - run: bun run --filter opencode typecheck
+      - run: bun run --filter @opencode-ai/tui typecheck
+
+      - name: HubCli tests (doctor, hubcli/)
+        # No real provider credentials are configured in CI — these tests use
+        # fixtures/fake keys only (verified by the secret-scan step below),
+        # never live network calls to Zen/DeepSeek/NVIDIA/etc.
+        working-directory: packages/opencode
+        run: bun test test/cli/cmd/doctor.test.ts test/cli/hubcli/ --timeout 60000
+
+      - name: secret scan (fail on obvious leaked key patterns)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash script/hubcli/release/scan-secrets.sh
+
+  build:
+    needs: typecheck-and-unit-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: windows-x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun install
+
+      - name: build + package ${{ matrix.target }} (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash script/hubcli/release/build-platform.sh ${{ matrix.target }}
+          bash script/hubcli/release/package-platform.sh ${{ matrix.target }} dist-release
+
+      - name: build + package ${{ matrix.target }} (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & script/hubcli/release/build-platform.ps1 -Target ${{ matrix.target }}
+          $buildExitCode = $LASTEXITCODE
+          if ($buildExitCode -ne 0) { throw "build-platform.ps1 failed with exit code $buildExitCode" }
+          & script/hubcli/release/package-platform.ps1 -Target ${{ matrix.target }} -OutDir dist-release
+          $packageExitCode = $LASTEXITCODE
+          if ($packageExitCode -ne 0) { throw "package-platform.ps1 failed with exit code $packageExitCode" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hubcli-ci-package-${{ matrix.target }}
+          path: dist-release/*
+          retention-days: 3
+
+  # Fresh runner, NO checkout of the repository. If the package secretly
+  # depends on the source tree, Bun, Git, or a build-machine path, these
+  # steps fail with a plain "not found" — not a judgment call.
+  verify-package:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: windows-x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hubcli-ci-package-${{ matrix.target }}
+          path: pkg-download
+
+      - name: extract package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/extracted"
+          tar -xzf pkg-download/hubcli-${{ matrix.target }}.tar.gz -C "${RUNNER_TEMP}/extracted"
+          echo "PKG_DIR=${RUNNER_TEMP}/extracted/hubcli-${{ matrix.target }}" >> "$GITHUB_ENV"
+
+      - name: extract package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP "extracted"
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          Expand-Archive -Path "pkg-download/hubcli-${{ matrix.target }}.zip" -DestinationPath $dest -Force
+          "PKG_DIR=$dest\hubcli-${{ matrix.target }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: confirm bun/git are not required (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          export PATH="/usr/bin:/bin"
+          command -v bun && { echo "bun unexpectedly still on a minimal PATH — not a useful negative test here, continuing anyway"; } || echo "confirmed: bun not on PATH for this step"
+          command -v git && { echo "git present on minimal PATH (system git) — package must not require it anyway"; } || echo "confirmed: git not on PATH for this step"
+          "${PKG_DIR}/hubcli" --version
+
+      - name: run version/help/profile/doctor/mcp (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          HOME: ${{ runner.temp }}/fake-home-${{ matrix.target }}
+        run: |
+          mkdir -p "$HOME"
+          "${PKG_DIR}/hubcli" --version
+          "${PKG_DIR}/hubcli" --help >/dev/null
+          "${PKG_DIR}/hubcli" profile list || true   # no ~/.hubcli/profiles.json yet on a bare install — must not crash
+          "${PKG_DIR}/hubcli" doctor || true         # missing config/credentials is expected to WARN, not crash
+          "${PKG_DIR}/hubcli" doctor --mcp || true
+
+      - name: run version/help/profile/doctor/mcp (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          USERPROFILE: ${{ runner.temp }}\fake-home-windows
+        run: |
+          New-Item -ItemType Directory -Path $env:USERPROFILE -Force | Out-Null
+          $parserTokens = $null
+          $parserErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$env:PKG_DIR\hubcli.ps1",
+            [ref]$parserTokens,
+            [ref]$parserErrors
+          ) | Out-Null
+          if ($parserErrors.Count -gt 0) {
+            $parserErrors | Format-List
+            exit 1
+          }
+          & "$env:PKG_DIR\hubcli.cmd" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:PKG_DIR\hubcli.cmd" --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          function Invoke-HubCliDiagnostic(
+            [string[]]$CommandArgs,
+            [int[]]$AllowedExitCodes
+          ) {
+            & "$env:PKG_DIR\hubcli.cmd" @CommandArgs
+            $code = $LASTEXITCODE
+            if ($code -notin $AllowedExitCodes) {
+              throw "Unexpected exit code $code for: hubcli $($CommandArgs -join ' ')"
+            }
+            $global:LASTEXITCODE = 0
+          }
+          Invoke-HubCliDiagnostic -CommandArgs @("profile", "list") -AllowedExitCodes @(0)
+          Invoke-HubCliDiagnostic -CommandArgs @("doctor") -AllowedExitCodes @(0, 1, 2)
+          Invoke-HubCliDiagnostic -CommandArgs @("doctor", "--mcp") -AllowedExitCodes @(0, 1, 2, 4)
+
+      - name: deterministic check — no personal/build-machine path leaked (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          BIN=$(find "${PKG_DIR:-pkg-download}" -iname "hubcli-runtime*" -type f 2>/dev/null | head -1)
+          if [ -z "$BIN" ]; then BIN=$(find pkg-download -iname "hubcli-runtime*" -type f | head -1); fi
+          if command -v strings >/dev/null 2>&1; then
+            LEAKED=$(strings -a "$BIN" 2>/dev/null | grep -E "/(Users|home)/[a-zA-Z0-9_.-]+/(Hubcli|Documents|Desktop)" || true)
+            if [ -n "$LEAKED" ]; then
+              echo "$LEAKED"
+              echo "Personal/developer path found embedded in the packaged binary — see docs/SECURITY.md."
+              exit 1
+            fi
+            echo "No personal-looking path pattern found in $BIN"
+          else
+            echo "strings not available on this runner — skipping (documented limitation)"
+          fi
+
+      - name: deterministic check — no personal/build-machine path leaked (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binary = Get-ChildItem -Path $env:PKG_DIR -Filter "hubcli-runtime*.exe" -File | Select-Object -First 1
+          if (-not $binary) { throw "hubcli-runtime.exe not found in extracted package" }
+          $text = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($binary.FullName))
+          if ($text -match '/Users/[A-Za-z0-9_.-]+/(Hubcli|Documents|Desktop)') {
+            throw "Personal/developer path found embedded in $($binary.FullName)"
+          }
+
+      - name: deterministic check — package has no secrets/source/.git (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          test -f pkg-download/hubcli-${{ matrix.target }}.tar.gz -o -f pkg-download/hubcli-${{ matrix.target }}.zip
+          ! find "$PKG_DIR" \( -iname "credentials.env" -o -iname "auth.json" -o -iname ".git" -o -iname "node_modules" \) | grep -q . || (echo "forbidden file found in package" && exit 1)
+          ! grep -rEan "sk-[A-Za-z0-9]{20,}|nvapi-[A-Za-z0-9_-]{20,}|(DASHSCOPE|DEEPSEEK|NVIDIA)_API_KEY[[:space:]]*[=:][[:space:]]*[\"']?[A-Za-z0-9_./+=-]{12,}" "$PKG_DIR" || (echo "possible secret literal found in package" && exit 1)
+
+      - name: deterministic check — package has no secrets/source/.git (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "pkg-download/hubcli-${{ matrix.target }}.zip")) {
+            throw "Expected Windows package archive was not downloaded"
+          }
+          $forbidden = Get-ChildItem -Path $env:PKG_DIR -Recurse -Force |
+            Where-Object { $_.Name -in @("credentials.env", "auth.json", ".git", "node_modules") }
+          if ($forbidden) {
+            $forbidden.FullName | Write-Output
+            throw "Forbidden file or directory found in package"
+          }
+          $secretPattern = 'sk-[A-Za-z0-9]{20,}|nvapi-[A-Za-z0-9_-]{20,}|(DASHSCOPE|DEEPSEEK|NVIDIA)_API_KEY\s*[=:]\s*["'']?[A-Za-z0-9_./+=-]{12,}'
+          $secretHits = Get-ChildItem -Path $env:PKG_DIR -Recurse -File |
+            Select-String -Pattern $secretPattern -ErrorAction SilentlyContinue
+          if ($secretHits) {
+            $secretHits | Write-Output
+            throw "Possible secret literal found in package"
+          }

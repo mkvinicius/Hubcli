@@ -26,6 +26,24 @@ const waitForFile = (file: string) =>
     }
   })
 
+function alive(pid: number) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function gone(pid: number, timeout = 5_000) {
+  const end = Date.now() + timeout
+  while (Date.now() < end) {
+    if (!alive(pid)) return true
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  return !alive(pid)
+}
+
 describe("AppProcess", () => {
   describe("run", () => {
     it.effect(
@@ -194,6 +212,29 @@ describe("AppProcess", () => {
         5_000,
       )
     }
+
+    it.live(
+      "AbortSignal cancellation terminates the scoped child process",
+      Effect.acquireUseRelease(
+        Effect.promise(() => fs.mkdtemp(path.join(tmpdir(), "opencode-process-abort-"))),
+        (directory) => {
+          const ready = path.join(directory, "ready")
+          const script = `const fs=require('fs');fs.writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},60000)`
+          return Effect.gen(function* () {
+            const svc = yield* AppProcess.Service
+            const controller = new AbortController()
+            const fiber = yield* svc.run(cmd("-e", script), { signal: controller.signal }).pipe(Effect.forkChild)
+            const pid = Number(yield* waitForFile(ready))
+
+            controller.abort(new Error("cancelled"))
+            expect(Exit.isFailure(yield* Fiber.await(fiber))).toBe(true)
+            expect(yield* Effect.promise(() => gone(pid))).toBe(true)
+          })
+        },
+        (directory) => Effect.promise(() => fs.rm(directory, { recursive: true, force: true })),
+      ),
+      10_000,
+    )
   })
 
   describe("inherited platform methods", () => {

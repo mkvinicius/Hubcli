@@ -2,12 +2,21 @@ import { EOL } from "os"
 import { Schema } from "effect"
 import { logo as glyphs } from "./logo"
 
-const wordmark = [
-  `⠀                                ▄     `,
-  `█▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█`,
-  `█  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀`,
-  `▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀`,
-]
+// Wordmark is brand-conditional: HubCli only when HUBCLI_BRAND=1 (launcher).
+const wordmark = process.env["HUBCLI_BRAND"]
+  ? [
+      `                        `,
+      `█  █ █  █ █▀▀█ █▀▀ █   █`,
+      `█▀▀█ █  █ █▀▀▄ █   █   █`,
+      `▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀ ▀▀▀ ▀`,
+      `Seu hub multi-LLM para programação no terminal.`,
+    ]
+  : [
+      `⠀                                ▄     `,
+      `█▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█`,
+      `█  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀`,
+      `▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀`,
+    ]
 
 export class CancelledError extends Schema.TaggedErrorClass<CancelledError>()("UICancelledError", {}) {}
 

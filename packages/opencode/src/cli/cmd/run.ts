@@ -25,6 +25,7 @@ import { Filesystem } from "@/util/filesystem"
 import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@opencode-ai/sdk/v2"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
+import { BRAND } from "@/cli/brand"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 
@@ -125,7 +126,7 @@ async function toolError(part: ToolPart) {
 
 export const RunCommand = effectCmd({
   command: "run [message..]",
-  describe: "run opencode with a message",
+  describe: `run ${BRAND} with a message`,
   // --attach connects to a remote server (no local instance needed); the
   // default path runs an in-process server and needs the project instance.
   instance: (args) => !args.attach,
@@ -162,6 +163,15 @@ export const RunCommand = effectCmd({
         type: "boolean",
         describe: "share the session",
       })
+      .option("profile", {
+        type: "string",
+        describe: "HubCli profile to route the model (coding|fast|reasoning|review|long-context)",
+      })
+      .option("no-fallback", {
+        type: "boolean",
+        default: false,
+        describe: "with --profile, always use the profile's first model",
+      })
       .option("model", {
         type: "string",
         alias: ["m"],
@@ -189,7 +199,7 @@ export const RunCommand = effectCmd({
       })
       .option("attach", {
         type: "string",
-        describe: "attach to a running opencode server (e.g., http://localhost:4096)",
+        describe: `attach to a running ${BRAND} server (e.g., http://localhost:4096)`,
       })
       .option("password", {
         alias: ["p"],
@@ -233,9 +243,25 @@ export const RunCommand = effectCmd({
         hidden: true,
         describe: "cap visible interactive replay to the newest N messages",
       })
-      .option("dangerously-skip-permissions", {
+      .option("interactive", {
+        alias: ["i"],
+        type: "boolean",
+        describe: "run in direct interactive split-footer mode",
+        default: false,
+      })
+      .option("auto", {
         type: "boolean",
         describe: "auto-approve permissions that are not explicitly denied (dangerous!)",
+        default: false,
+      })
+      .option("yolo", {
+        type: "boolean",
+        hidden: true,
+        default: false,
+      })
+      .option("dangerously-skip-permissions", {
+        type: "boolean",
+        hidden: true,
         default: false,
       })
       .option("demo", {
@@ -243,6 +269,10 @@ export const RunCommand = effectCmd({
         default: false,
         hidden: true,
         describe: "enable direct interactive demo slash commands; pass one as the message to run it immediately",
+      })
+      .middleware((argv) => {
+        if (argv.attach || argv.mini || argv.interactive) return
+        process.env.OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER ??= "1"
       }),
   handler: Effect.fn("Cli.run")(function* (args) {
     const { Agent } = yield* Effect.promise(() => import("@/agent/agent"))
@@ -255,10 +285,27 @@ export const RunCommand = effectCmd({
     yield* Effect.promise(async () => {
       const rawMessage = [...args.message, ...(args["--"] || [])].join(" ")
       const interactive = args.mini
+      const auto = args.auto || args.yolo || args["dangerously-skip-permissions"]
       const thinking = interactive ? (args.thinking ?? true) : (args.thinking ?? false)
       const die = (message: string): never => {
         UI.error(message)
         process.exit(1)
+      }
+
+      // HubCli profile routing — explicit and inspectable (hubcli route explain).
+      // Selection happens before the session starts; args.model wins if given.
+      if (process.env["HUBCLI_BRAND"] && (args as { profile?: string }).profile && !args.model) {
+        const { resolveProfile } = await import("@/cli/hubcli/profiles")
+        const routed = resolveProfile((args as { profile?: string }).profile!, {
+          noFallback: !!(args as { noFallback?: boolean }).noFallback,
+        })
+        if (!routed.ok || !routed.model) die(`profile routing failed: ${routed.error}`)
+        args.model = routed.model
+        process.stderr.write(
+          `hubcli: profile ${routed.profile} → ${routed.model}` +
+            (routed.fallback ? " (fallback — see: hubcli route explain --profile " + routed.profile + ")" : "") +
+            "\n",
+        )
       }
       const dieInteractive = (error: unknown): never => {
         if (error instanceof Error && error.message === INTERACTIVE_INPUT_ERROR) {
@@ -780,7 +827,7 @@ export const RunCommand = effectCmd({
               const permission = event.properties
               if (permission.sessionID !== sessionID) continue
 
-              if (args["dangerously-skip-permissions"]) {
+              if (auto) {
                 await client.permission.reply({
                   requestID: permission.id,
                   reply: "once",
@@ -809,8 +856,10 @@ export const RunCommand = effectCmd({
         await share(client, sessionID)
 
         if (!interactive) {
-          const events = await client.event.subscribe()
+          const controller = new AbortController()
+          const events = await client.event.subscribe(undefined, { signal: controller.signal })
           const completed = loop(client, events).catch((e) => {
+            if (controller.signal.aborted) return
             console.error(e)
             process.exitCode = 1
           })
@@ -820,14 +869,32 @@ export const RunCommand = effectCmd({
             if (error) process.exitCode = 1
           }
 
-          if (args.command) {
-            const result = await client.session.command({
+          try {
+            if (args.command) {
+              const result = await client.session.command({
+                sessionID,
+                agent,
+                model: args.model,
+                command: args.command,
+                arguments: message,
+                variant: args.variant,
+              })
+              if (result.error) {
+                if (!emit("error", { error: result.error })) UI.error(formatRunError(result.error))
+                process.exitCode = 1
+                return
+              }
+              await finish()
+              return
+            }
+
+            const model = pick(args.model)
+            const result = await client.session.prompt({
               sessionID,
               agent,
-              model: args.model,
-              command: args.command,
-              arguments: message,
+              model,
               variant: args.variant,
+              parts: [...files, { type: "text", text: message }],
             })
             if (result.error) {
               if (!emit("error", { error: result.error })) UI.error(formatRunError(result.error))
@@ -836,23 +903,10 @@ export const RunCommand = effectCmd({
             }
             await finish()
             return
+          } finally {
+            controller.abort()
+            await completed
           }
-
-          const model = pick(args.model)
-          const result = await client.session.prompt({
-            sessionID,
-            agent,
-            model,
-            variant: args.variant,
-            parts: [...files, { type: "text", text: message }],
-          })
-          if (result.error) {
-            if (!emit("error", { error: result.error })) UI.error(formatRunError(result.error))
-            process.exitCode = 1
-            return
-          }
-          await finish()
-          return
         }
 
         const model = pick(args.model)
@@ -963,6 +1017,9 @@ export async function runMini(input: MiniCommandInput) {
     $0: "opencode",
     _: ["mini"],
     message: input.prompt ? [input.prompt] : [],
+    profile: undefined,
+    "no-fallback": false,
+    noFallback: false,
     command: undefined,
     continue: input.continue,
     session: input.session,
@@ -981,9 +1038,12 @@ export async function runMini(input: MiniCommandInput) {
     variant: undefined,
     thinking: undefined,
     mini: true,
+    interactive: false,
     replay: input.replay ?? true,
     "replay-limit": input.replayLimit,
     replayLimit: input.replayLimit,
+    auto: false,
+    yolo: false,
     "dangerously-skip-permissions": false,
     dangerouslySkipPermissions: false,
     demo: input.demo ?? false,

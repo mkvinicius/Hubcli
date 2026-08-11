@@ -29,12 +29,17 @@ import { DbCommand } from "./cli/cmd/db"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
+import { SCRIPT, BRAND } from "./cli/brand"
+import { DoctorCommand } from "./cli/cmd/doctor"
+import { MaintenanceCommand } from "./cli/cmd/maintenance"
+import { ProfileCommand, RouteCommand } from "./cli/hubcli/profile-cmd"
+import { AuthCommand } from "./cli/hubcli/auth-cmd"
 
 const args = hideBin(process.argv)
 
 function show(out: string) {
   const text = out.trimStart()
-  if (!text.startsWith("opencode ")) {
+  if (!text.startsWith(SCRIPT + " ")) {
     process.stderr.write(UI.logo() + EOL + EOL)
     process.stderr.write(text + EOL)
     return
@@ -44,7 +49,7 @@ function show(out: string) {
 
 const cli = yargs(args)
   .parserConfiguration({ "populate--": true })
-  .scriptName("opencode")
+  .scriptName(SCRIPT)
   .wrap(100)
   .help("help", "show help")
   .alias("help", "h")
@@ -101,7 +106,15 @@ const cli = yargs(args)
   .command(SessionCommand)
   .command(PluginCommand)
   .command(DbCommand)
-  .fail((msg, err) => {
+// HubCli-exclusive commands — never registered when running as opencode
+if (BRAND === "HubCli") {
+  cli.command(DoctorCommand)
+  cli.command(MaintenanceCommand)
+  cli.command(ProfileCommand)
+  cli.command(RouteCommand)
+  cli.command(AuthCommand)
+}
+cli.fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||
       msg?.startsWith("Not enough non-option arguments") ||

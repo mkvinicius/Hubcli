@@ -3,10 +3,15 @@ import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
 import { Installation } from "../../installation"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { BRAND, HUBCLI_BRAND } from "@/cli/brand"
+import path from "path"
+import os from "os"
+
+const SYNC_SCRIPT = path.join(os.homedir(), "Hubcli", "script", "hubcli", "sync-upstream.sh")
 
 export const UpgradeCommand = {
   command: "upgrade [target]",
-  describe: "upgrade opencode to the latest or a specific version",
+  describe: `upgrade ${BRAND} to the latest or a specific version`,
   builder: (yargs: Argv) => {
     return yargs
       .positional("target", {
@@ -25,6 +30,20 @@ export const UpgradeCommand = {
     UI.println(UI.logo("  "))
     UI.empty()
     prompts.intro("Upgrade")
+
+    // HubCli runs from source — the OpenCode binary updater does not apply.
+    // Direct the user to the maintenance commands instead.
+    if (HUBCLI_BRAND) {
+      prompts.log.warn("HubCli é mantido pelo fork ~/Hubcli e roda direto do código-fonte.")
+      prompts.log.warn("O atualizador de binário do OpenCode não se aplica aqui.")
+      prompts.log.info("Para sincronizar com o upstream OpenCode, use:")
+      prompts.log.info("  hubcli maintenance status   — ver divergência e estado")
+      prompts.log.info("  hubcli maintenance fetch    — buscar commits do upstream")
+      prompts.log.info("  hubcli maintenance preview  — analisar conflitos potenciais")
+      prompts.log.info("  hubcli maintenance sync     — executar merge assistido")
+      prompts.outro("Nenhuma alteração feita.")
+      return
+    }
     const detectedMethod = await Installation.method()
     const method = (args.method as Installation.Method) ?? detectedMethod
     if (method === "unknown") {

@@ -1,0 +1,66 @@
+diff --git a/src/terminal.ts b/src/terminal.ts
+index ec248d46a939f8a09cd669e853cefb126922c80a..a8401685ecea6c5c91432f0d913ab1eb5b3ab1df 100644
+--- a/src/terminal.ts
++++ b/src/terminal.ts
+@@ -136,4 +136,5 @@ export class Terminal implements IPty {
+ 
+ 	private _readLoop = false;
+ 	private _closing = false;
++	private _exitEvent: IExitEvent | undefined;
+ 
+@@ -172,6 +173,6 @@ export class Terminal implements IPty {
+ 		if (this.handle < 0) throw new Error("PTY spawn failed");
+ 
+ 		this._pid = lib.symbols.bun_pty_get_pid(this.handle);
+-		this._startReadLoop();
++		queueMicrotask(() => void this._startReadLoop());
+ 	}
+ 
+@@ -194,7 +195,20 @@ export class Terminal implements IPty {
+ 		return this._onData.event;
+ 	}
+ 	get onExit() {
+-		return this._onExit.event;
++		return (listener: (event: IExitEvent) => void) => {
++			const event = this._exitEvent;
++			if (!event) return this._onExit.event(listener);
++
++			let disposed = false;
++			queueMicrotask(() => {
++				if (!disposed) listener(event);
++			});
++			return {
++				dispose() {
++					disposed = true;
++				},
++			};
++		};
+ 	}
+ 
+ 	/* ------------- IO methods ------------- */
+@@ -217,7 +231,13 @@ export class Terminal implements IPty {
+ 		this._closing = true;
+ 		lib.symbols.bun_pty_kill(this.handle);
+ 		lib.symbols.bun_pty_close(this.handle);
+-		this._onExit.fire({ exitCode: 0, signal });
++		this._fireExit({ exitCode: 0, signal });
+ 	}
++
++	private _fireExit(event: IExitEvent) {
++		if (this._exitEvent) return;
++		this._exitEvent = event;
++		this._onExit.fire(event);
++	}
+ 
+ 	/* ------------- read-loop ------------- */
+@@ -244,7 +264,9 @@ export class Terminal implements IPty {
+ 					this._onData.fire(remaining);
+ 				}
+ 				const exitCode = lib.symbols.bun_pty_get_exit_code(this.handle);
+-				this._onExit.fire({ exitCode });
++				this._closing = true;
++				lib.symbols.bun_pty_close(this.handle);
++				this._fireExit({ exitCode });
+ 				break;
+ 			} else if (n < 0) {
+ 				// error - flush decoder before breaking

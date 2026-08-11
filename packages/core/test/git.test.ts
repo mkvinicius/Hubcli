@@ -52,6 +52,8 @@ describe("Git", () => {
         expect(yield* read(path.join(target, "README.md"))).toBe("feature\n")
       }),
     ),
+    // spawning many sequential git processes exceeds the 5s default on Windows CI
+    { timeout: 30_000 },
   )
 })
 

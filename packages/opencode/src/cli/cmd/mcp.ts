@@ -20,6 +20,8 @@ import { Global } from "@opencode-ai/core/global"
 import { modify, applyEdits } from "jsonc-parser"
 import { Filesystem } from "@/util/filesystem"
 import { Effect } from "effect"
+import { BRAND } from "@/cli/brand"
+import { McpServeCommand } from "@/cli/hubcli/mcp-serve"
 
 function getAuthStatusIcon(status: MCP.AuthStatus): string {
   switch (status) {
@@ -95,14 +97,17 @@ function authState() {
 export const McpCommand = cmd({
   command: "mcp",
   describe: "manage MCP (Model Context Protocol) servers",
-  builder: (yargs) =>
-    yargs
+  builder: (yargs) => {
+    const base = yargs
       .command(McpAddCommand)
       .command(McpListCommand)
       .command(McpAuthCommand)
       .command(McpLogoutCommand)
       .command(McpDebugCommand)
-      .demandCommand(),
+    // HubCli-only: MCP server over stdio. Never registered as opencode.
+    if (BRAND === "HubCli") base.command(McpServeCommand)
+    return base.demandCommand()
+  },
   async handler() {},
 })
 

@@ -37,10 +37,12 @@ import { SyncProvider, useSync } from "./context/sync"
 import { DataProvider } from "./context/data"
 import { LocationProvider } from "./context/location"
 import { LocalProvider, useLocal } from "./context/local"
+import { PermissionProvider } from "./context/permission"
 import { DialogModel } from "./component/dialog-model"
 import { useConnected } from "./component/use-connected"
 import { DialogMcp } from "./component/dialog-mcp"
 import { DialogStatus } from "./component/dialog-status"
+import { DialogDebug } from "./component/dialog-debug"
 import { DialogThemeList } from "./component/dialog-theme-list"
 import { DialogHelp } from "./ui/dialog-help"
 import { DialogAgent } from "./component/dialog-agent"
@@ -114,6 +116,7 @@ const appBindingCommands = [
   "provider.connect",
   "console.org.switch",
   "opencode.status",
+  "opencode.debug",
   "theme.switch",
   "theme.switch_mode",
   "theme.mode.lock",
@@ -296,34 +299,36 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
                                           headers={input.headers}
                                           events={input.events}
                                         >
-                                          <ProjectProvider>
-                                            <SyncProvider>
-                                              <DataProvider>
-                                                <ThemeProvider mode={mode}>
-                                                  <LocalProvider>
-                                                    <PromptStashProvider>
-                                                      <DialogProvider>
-                                                        <FrecencyProvider>
-                                                          <PromptHistoryProvider>
-                                                            <PromptRefProvider>
-                                                              <EditorContextProvider>
-                                                                <LocationProvider>
-                                                                  <App
-                                                                    onSnapshot={input.onSnapshot}
-                                                                    pluginHost={input.pluginHost}
-                                                                  />
-                                                                </LocationProvider>
-                                                              </EditorContextProvider>
-                                                            </PromptRefProvider>
-                                                          </PromptHistoryProvider>
-                                                        </FrecencyProvider>
-                                                      </DialogProvider>
-                                                    </PromptStashProvider>
-                                                  </LocalProvider>
-                                                </ThemeProvider>
-                                              </DataProvider>
-                                            </SyncProvider>
-                                          </ProjectProvider>
+                                          <PermissionProvider>
+                                            <ProjectProvider>
+                                              <SyncProvider>
+                                                <DataProvider>
+                                                  <ThemeProvider mode={mode}>
+                                                    <LocalProvider>
+                                                      <PromptStashProvider>
+                                                        <DialogProvider>
+                                                          <FrecencyProvider>
+                                                            <PromptHistoryProvider>
+                                                              <PromptRefProvider>
+                                                                <EditorContextProvider>
+                                                                  <LocationProvider>
+                                                                    <App
+                                                                      onSnapshot={input.onSnapshot}
+                                                                      pluginHost={input.pluginHost}
+                                                                    />
+                                                                  </LocationProvider>
+                                                                </EditorContextProvider>
+                                                              </PromptRefProvider>
+                                                            </PromptHistoryProvider>
+                                                          </FrecencyProvider>
+                                                        </DialogProvider>
+                                                      </PromptStashProvider>
+                                                    </LocalProvider>
+                                                  </ThemeProvider>
+                                                </DataProvider>
+                                              </SyncProvider>
+                                            </ProjectProvider>
+                                          </PermissionProvider>
                                         </SDKProvider>
                                       </PluginRuntimeProvider>
                                     </TuiConfigProvider>
@@ -446,24 +451,24 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     if (!terminalTitleEnabled() || Flag.OPENCODE_DISABLE_TERMINAL_TITLE) return
 
     if (route.data.type === "home") {
-      renderer.setTerminalTitle("OpenCode")
+      renderer.setTerminalTitle("HubCli")
       return
     }
 
     if (route.data.type === "session") {
       const session = sync.session.get(route.data.sessionID)
       if (!session || isDefaultTitle(session.title)) {
-        renderer.setTerminalTitle("OpenCode")
+        renderer.setTerminalTitle("HubCli")
         return
       }
 
       const title = session.title.length > 40 ? session.title.slice(0, 37) + "..." : session.title
-      renderer.setTerminalTitle(`OC | ${title}`)
+      renderer.setTerminalTitle(`HC | ${title}`)
       return
     }
 
     if (route.data.type === "plugin") {
-      renderer.setTerminalTitle(`OC | ${route.data.id}`)
+      renderer.setTerminalTitle(`HC | ${route.data.id}`)
     }
   })
 
@@ -762,6 +767,15 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         category: "System",
       },
       {
+        name: "opencode.debug",
+        title: "View debug info",
+        slashName: "debug",
+        run: () => {
+          dialog.replace(() => <DialogDebug />)
+        },
+        category: "System",
+      },
+      {
         name: "theme.switch",
         title: "Switch theme",
         slashName: "themes",
@@ -926,6 +940,16 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
           dialog.clear()
         },
       },
+      {
+        name: "permission.mode",
+        title:
+          local.permission.mode === "auto" ? "Disable auto-approve permissions" : "Enable auto-approve permissions",
+        category: "System",
+        run: () => {
+          local.permission.toggle()
+          dialog.clear()
+        },
+      },
     ].map((command) => ({
       namespace: "palette",
       ...command,
@@ -1043,7 +1067,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     await DialogAlert.show(
       dialog,
       "Update Complete",
-      `Successfully updated to OpenCode v${result.data.version}. Please restart the application.`,
+      `Successfully updated to HubCli v${result.data.version}. Please restart the application.`,
     )
 
     void exit()
