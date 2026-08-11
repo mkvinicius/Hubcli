@@ -10,6 +10,10 @@ set -euo pipefail
 OUT_DIR="${1:-}"
 [ -z "$OUT_DIR" ] && { echo "usage: generate-checksums.sh <output-dir>" >&2; exit 1; }
 [ -d "$OUT_DIR" ] || { echo "generate-checksums.sh: not a directory: $OUT_DIR" >&2; exit 1; }
+# Resolve to an absolute path up front: the loop below does `cd "$OUT_DIR"`,
+# which would break a relative $_checksums path derived from a relative
+# $OUT_DIR (e.g. "dist-release" -> "dist-release/dist-release/..." after cd).
+OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
 _sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
