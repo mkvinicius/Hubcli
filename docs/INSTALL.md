@@ -6,11 +6,14 @@
 curl -fsSL https://raw.githubusercontent.com/mkvinicius/Hubcli/dev/install.sh | bash
 ```
 
-Ou, via GitHub Release (depois que uma release existir):
-
-```bash
-curl -fsSL https://github.com/mkvinicius/Hubcli/releases/latest/download/install.sh | bash
-```
+> Nota: a URL `github.com/.../releases/latest/download/install.sh` (o padrão
+> "via GitHub Release") **não funciona** enquanto só existirem prereleases
+> (toda `hubcli-v*-rc.N` até agora) — o endpoint `/releases/latest` do
+> GitHub só reconhece releases não-prerelease. Por isso o comando acima usa
+> `raw.githubusercontent.com` direto da branch `dev`, que sempre funciona.
+> O `install.sh` baixado por essa URL resolve a versão certa sozinho (ele
+> tem seu próprio fallback para pegar a última release, incluindo
+> prereleases).
 
 **Alternativa mais segura** — baixar, inspecionar e só então rodar:
 
@@ -27,8 +30,10 @@ antes de extrair, e nunca continua se o checksum não bater.
 ## Windows (PowerShell)
 
 ```powershell
-irm https://github.com/mkvinicius/Hubcli/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/mkvinicius/Hubcli/dev/install.ps1 | iex
 ```
+
+(mesmo motivo do macOS/Linux acima: a URL `releases/latest/download/` não funciona só com prereleases publicadas.)
 
 Alternativa segura (baixar e inspecionar primeiro):
 
@@ -46,16 +51,18 @@ powershell -File install.ps1
 
 | Plataforma | Artefato | Status |
 |---|---|---|
-| macOS Intel (darwin-x64) | `hubcli-darwin-x64.tar.gz` | construído e testado nesta sessão (máquina nativa) |
-| macOS Apple Silicon (darwin-arm64) | `hubcli-darwin-arm64.tar.gz` | construído (cross-compile); binário nunca executado em hardware ARM real |
-| Linux x64 | `hubcli-linux-x64.tar.gz` | construído (cross-compile); binário nunca executado em Linux real |
-| Linux ARM64 | `hubcli-linux-arm64.tar.gz` | construído (cross-compile); binário nunca executado em hardware real |
-| Windows x64 | `hubcli-windows-x64.zip` | construído (cross-compile); binário nunca executado no Windows |
+| macOS Intel (darwin-x64) | `hubcli-darwin-x64.tar.gz` | validado por humano (nesta máquina) **e** por CI real (`macos-15-intel`) |
+| macOS Apple Silicon (darwin-arm64) | `hubcli-darwin-arm64.tar.gz` | validado por CI real (`macos-14`) — build + `--version`/`--help`/`doctor`/`doctor --mcp` num runner limpo, sem checkout do repo |
+| Linux x64 | `hubcli-linux-x64.tar.gz` | validado por CI real (`ubuntu-latest`), mesmo processo acima |
+| Linux ARM64 | `hubcli-linux-arm64.tar.gz` | construído por cross-compile em CI; **não smoke-testado** (GitHub não tem runner ARM64 Linux gratuito) |
+| Windows x64 | `hubcli-windows-x64.zip` | validado por CI real (`windows-latest`) — build + smoke test automatizado; **ainda não confirmado por um humano numa máquina Windows física** |
 
-Todos os 5 artefatos foram gerados a partir do mecanismo oficial de build do
-OpenCode (`packages/opencode/script/build.ts`, cross-compilação nativa do
-Bun) nesta sessão, rodando em uma máquina macOS Intel. Apenas o alvo nativo
-(darwin-x64) foi de fato executado e testado ponta a ponta.
+Todos os 5 artefatos são gerados pelo workflow `hubcli-release.yml` a cada
+release, usando o mecanismo oficial de build do OpenCode
+(`packages/opencode/script/build.ts`) com cross-compilação nativa do Bun.
+O job `verify-package` roda em runner **sem checkout do repositório** — só
+baixa o pacote publicado e executa os binários, provando que eles não
+dependem do repo/Bun/Git/path de build.
 
 ## Requisitos
 
