@@ -2,6 +2,14 @@
 
 Registro das mudanças do fork sobre o OpenCode. Formato reverso-cronológico.
 
+## v0.1.0-rc.8 (2026-08-11)
+
+Cherry-pick de um fix do upstream diretamente relevante à instabilidade do NVIDIA/MiniMax M3 investigada nesta sessão.
+
+### Correções
+
+- `provider/transform.ts`: MiniMax M3 via NVIDIA (`providerID: "nvidia"`) agora usa o formato de parâmetro correto para controlar "thinking" (`chat_template_kwargs.thinking_mode`) em vez do formato genérico Anthropic-style (`thinking.type`), que a API da NVIDIA não reconhece da mesma forma. Origem: upstream `50eee1f5a` (`fix(provider): correct MiniMax M3 thinking variants`, 22/07/2026), trazido via `git cherry-pick` — sem conflitos. Não resolve sozinho toda a instabilidade documentada em `docs/SECURITY.md`/investigação anterior (parte é mesmo instabilidade do provider), mas corrige um payload potencialmente incorreto que pode ter contribuído para ela.
+
 ## v0.1.0-rc.7 (2026-08-11)
 
 Terceira cópia do logo antigo, esquecida na rc.6.
