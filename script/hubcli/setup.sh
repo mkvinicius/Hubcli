@@ -190,7 +190,7 @@ if [ ! -d "$HUBCLI_HOME" ]; then
 else
   _ok "Diretório existente: $HUBCLI_HOME"
   # Garantir que a permissão seja 700
-  _dir_perms="$(stat -f "%Lp" "$HUBCLI_HOME" 2>/dev/null || stat -c "%a" "$HUBCLI_HOME" 2>/dev/null || echo "unknown")"
+  _dir_perms="$(stat -c "%a" "$HUBCLI_HOME" 2>/dev/null || stat -f "%Lp" "$HUBCLI_HOME" 2>/dev/null || echo "unknown")"
   if [ "$_dir_perms" != "700" ] && [ "$MODE" != "check" ] && [ "$DRY_RUN" -eq 0 ]; then
     chmod 700 "$HUBCLI_HOME"
     _ok "Permissão ajustada para 700"
@@ -248,7 +248,7 @@ _head "5. Credenciais"
 
 if [ -f "$HUBCLI_CREDS" ]; then
   # Verificar apenas permissão — nunca ler nem copiar o conteúdo
-  _creds_perms="$(stat -f "%Lp" "$HUBCLI_CREDS" 2>/dev/null || stat -c "%a" "$HUBCLI_CREDS" 2>/dev/null || echo "unknown")"
+  _creds_perms="$(stat -c "%a" "$HUBCLI_CREDS" 2>/dev/null || stat -f "%Lp" "$HUBCLI_CREDS" 2>/dev/null || echo "unknown")"
   _ok "credentials.env existente (preservada, conteúdo não lido)"
   if [ "$_creds_perms" = "600" ]; then
     _ok "Permissão: 600"

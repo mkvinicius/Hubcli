@@ -68,7 +68,7 @@ esac
 # Does not override variables already set in the calling environment.
 # ---------------------------------------------------------------------------
 if [ -f "$HUBCLI_CREDS" ]; then
-  _creds_perms=$(stat -f "%Lp" "$HUBCLI_CREDS" 2>/dev/null || stat -c "%a" "$HUBCLI_CREDS" 2>/dev/null || echo "unknown")
+  _creds_perms=$(stat -c "%a" "$HUBCLI_CREDS" 2>/dev/null || stat -f "%Lp" "$HUBCLI_CREDS" 2>/dev/null || echo "unknown")
   if [ "$_creds_perms" != "600" ]; then
     echo "hubcli: credentials file has insecure permissions ($_creds_perms). Run: chmod 600 $HUBCLI_CREDS" >&2
     exit 1

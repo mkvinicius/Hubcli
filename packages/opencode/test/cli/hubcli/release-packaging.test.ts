@@ -631,3 +631,44 @@ describe("build.ts --target flag (static)", () => {
     expect(buildTs).toContain('targetFlag.split("-")[0] === "windows" ? "win32"')
   })
 })
+
+describe("shell permission probes are portable across GNU and BSD stat", () => {
+  // Regression: the launchers probed permissions with
+  //   stat -f "%Lp" ... || stat -c "%a" ...
+  // On Linux, `stat -f` means "display FILESYSTEM status" and SUCCEEDS,
+  // printing disk info instead of a mode — so the `||` fallback never ran and
+  // the mode comparison saw a multi-line blob instead of "600". Every Linux
+  // user with a credentials.env got "insecure permissions" and the launcher
+  // refused to start. GNU `stat -c` must be tried first; on macOS/BSD it is an
+  // illegal option, fails cleanly, and falls through to `stat -f`.
+  const shellFiles = [
+    "script/hubcli/setup.sh",
+    "script/hubcli/launcher-template.sh",
+    "script/hubcli/release/hubcli-dist-launcher.sh",
+  ]
+
+  for (const rel of shellFiles) {
+    test(`${rel} tries GNU stat -c before BSD stat -f`, () => {
+      const content = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8")
+      for (const line of content.split(/\r?\n/)) {
+        if (!line.includes("stat -")) continue
+        const gnu = line.indexOf('stat -c "%a"')
+        const bsd = line.indexOf('stat -f "%Lp"')
+        if (gnu === -1 && bsd === -1) continue
+        expect(gnu).toBeGreaterThan(-1)
+        expect(bsd).toBeGreaterThan(-1)
+        expect(gnu).toBeLessThan(bsd)
+      }
+    })
+  }
+
+  test("the permission probe actually returns a mode on this machine", () => {
+    const dir = tmpdir("hubcli-stat-probe-")
+    const file = path.join(dir, "credentials.env")
+    fs.writeFileSync(file, "DEEPSEEK_API_KEY=\n")
+    fs.chmodSync(file, 0o600)
+    const probe = `stat -c "%a" "${file}" 2>/dev/null || stat -f "%Lp" "${file}" 2>/dev/null || echo unknown`
+    const { stdout } = run("bash", ["-c", probe])
+    expect(stdout.trim()).toBe("600")
+  })
+})
