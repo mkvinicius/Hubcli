@@ -662,7 +662,10 @@ describe("shell permission probes are portable across GNU and BSD stat", () => {
     })
   }
 
-  test("the permission probe actually returns a mode on this machine", () => {
+  // POSIX-only: these launchers never run on Windows (it uses hubcli.ps1),
+  // and NTFS has no 0600 mode for chmod to set, so the probe has nothing
+  // meaningful to return there.
+  testPosix("the permission probe actually returns a mode on this machine", () => {
     const dir = tmpdir("hubcli-stat-probe-")
     const file = path.join(dir, "credentials.env")
     fs.writeFileSync(file, "DEEPSEEK_API_KEY=\n")
