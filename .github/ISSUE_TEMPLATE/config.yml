@@ -1,5 +1,14 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
-  - name: 💬 Discord Community
-    url: https://discord.gg/opencode
-    about: For support, troubleshooting, how-to questions, and real-time discussion.
+  - name: 📖 Documentação de instalação
+    url: https://github.com/mkvinicius/Hubcli/blob/dev/docs/INSTALL.md
+    about: Como instalar no macOS, Linux e Windows, incluindo instalação offline.
+  - name: 🩺 Solução de problemas
+    url: https://github.com/mkvinicius/Hubcli/blob/dev/docs/TROUBLESHOOTING.md
+    about: Erros comuns de instalação, PATH, credenciais e providers.
+  - name: 🪟 Windows
+    url: https://github.com/mkvinicius/Hubcli/blob/dev/docs/WINDOWS.md
+    about: Problemas específicos do Windows (PATH, TLS, SmartScreen, proxy corporativo).
+  - name: 🔗 OpenCode (projeto original)
+    url: https://github.com/anomalyco/opencode
+    about: HubCli é um fork independente. Bugs do OpenCode em si devem ir para lá.

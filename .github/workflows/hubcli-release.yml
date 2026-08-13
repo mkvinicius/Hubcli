@@ -314,6 +314,9 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # The Releases page is where most people land first, so every release
+      # leads with the install commands instead of only a changelog diff.
+      # generate_release_notes appends the auto-generated changelog below it.
       - name: create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -321,6 +324,7 @@ jobs:
           name: ${{ steps.meta.outputs.tag }}
           prerelease: ${{ steps.meta.outputs.prerelease }}
           generate_release_notes: true
+          body_path: script/hubcli/release/release-notes-header.md
           files: |
             dist-release/*.tar.gz
             dist-release/*.zip

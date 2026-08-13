@@ -320,10 +320,10 @@ jobs:
           echo "::endgroup::"
 
           # Config/credentials must survive a --repair untouched.
-          echo "DEEPSEEK_API_KEY=must-survive-repair" >> "${FAKE_HOME}/.hubcli/credentials.env"
+          echo "DEEPSEEK_API_KEY=keep-me" >> "${FAKE_HOME}/.hubcli/credentials.env"
           HOME="$FAKE_HOME" HUBCLI_BIN_DIR="$BIN_DIR" bash install.sh --check
           HOME="$FAKE_HOME" HUBCLI_BIN_DIR="$BIN_DIR" bash install.sh --repair
-          grep -q "must-survive-repair" "${FAKE_HOME}/.hubcli/credentials.env" \
+          grep -q "keep-me" "${FAKE_HOME}/.hubcli/credentials.env" \
             || { echo "--repair destroyed user credentials"; exit 1; }
 
           # A bad checksum must abort without installing anything.
@@ -342,7 +342,7 @@ jobs:
           # Uninstall removes binaries but never user data.
           HOME="$FAKE_HOME" HUBCLI_BIN_DIR="$BIN_DIR" bash install.sh --uninstall
           test ! -e "${BIN_DIR}/hubcli" || { echo "uninstall left the launcher behind"; exit 1; }
-          grep -q "must-survive-repair" "${FAKE_HOME}/.hubcli/credentials.env" \
+          grep -q "keep-me" "${FAKE_HOME}/.hubcli/credentials.env" \
             || { echo "uninstall destroyed user credentials"; exit 1; }
           echo "installer verified end to end on ${{ matrix.target }}"
 
@@ -379,11 +379,11 @@ jobs:
 
           # Config/credentials must survive a -Repair untouched.
           $creds = Join-Path $fakeHome ".hubcli\credentials.env"
-          Add-Content -Path $creds -Value "DEEPSEEK_API_KEY=must-survive-repair"
+          Add-Content -Path $creds -Value "DEEPSEEK_API_KEY=keep-me"
           & .\install.ps1 -InstallDir $binDir -Check
           & .\install.ps1 -InstallDir $binDir -Repair -NoPathPrompt
           if ($LASTEXITCODE -ne 0) { throw "install.ps1 -Repair exited $LASTEXITCODE" }
-          if (-not (Select-String -Path $creds -Pattern "must-survive-repair" -Quiet)) {
+          if (-not (Select-String -Path $creds -Pattern "keep-me" -Quiet)) {
             throw "-Repair destroyed user credentials"
           }
 
@@ -410,7 +410,7 @@ jobs:
           # Uninstall removes binaries but never user data.
           & .\install.ps1 -InstallDir $binDir -Uninstall
           if (Test-Path (Join-Path $binDir "hubcli.cmd")) { throw "uninstall left the launcher behind" }
-          if (-not (Select-String -Path $creds -Pattern "must-survive-repair" -Quiet)) {
+          if (-not (Select-String -Path $creds -Pattern "keep-me" -Quiet)) {
             throw "uninstall destroyed user credentials"
           }
           Write-Output "installer verified end to end on windows-x64"

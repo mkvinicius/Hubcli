@@ -1,47 +1,61 @@
-# Security
+# Segurança
 
-## IMPORTANT
+HubCli é um fork independente do [OpenCode](https://github.com/anomalyco/opencode).
+O motor é o mesmo, então o modelo de ameaça abaixo é herdado — mas o canal de
+reporte é outro.
 
-We do not accept AI generated security reports. We receive a large number of
-these and we absolutely do not have the resources to review them all. If you
-submit one that will be an automatic ban from the project.
+## Modelo de ameaça
 
-## Threat Model
+### Sem sandbox
 
-### Overview
+HubCli **não** isola o agente. O sistema de permissões existe para você
+acompanhar o que o agente está fazendo (ele pede confirmação antes de rodar
+comandos, escrever arquivos, etc.), mas **não é um mecanismo de isolamento de
+segurança**.
 
-OpenCode is an AI-powered coding assistant that runs locally on your machine. It provides an agent system with access to powerful tools including shell execution, file operations, and web access.
+Se você precisa de isolamento real, rode o HubCli dentro de um contêiner ou VM.
 
-### No Sandbox
+### Modo servidor
 
-OpenCode does **not** sandbox the agent. The permission system exists as a UX feature to help users stay aware of what actions the agent is taking - it prompts for confirmation before executing commands, writing files, etc. However, it is not designed to provide security isolation.
+O modo servidor é opt-in. Ao habilitar, defina `OPENCODE_SERVER_PASSWORD` para
+exigir HTTP Basic Auth. Sem isso, o servidor roda sem autenticação (com aviso).
+Proteger o servidor é responsabilidade de quem o habilita.
 
-If you need true isolation, run OpenCode inside a Docker container or VM.
+### Credenciais
 
-### Server Mode
+Chaves ficam em `~/.hubcli/credentials.env` (permissão 600 obrigatória no
+macOS/Linux) ou no auth nativo do OpenCode. O launcher usa um parser
+whitelist — nunca `source` nem `eval` — e nenhum comando do HubCli imprime
+valores de credencial (`doctor` e `auth status` mostram apenas presença).
 
-Server mode is opt-in only. When enabled, set `OPENCODE_SERVER_PASSWORD` to require HTTP Basic Auth. Without this, the server runs unauthenticated (with a warning). It is the end user's responsibility to secure the server - any functionality it provides is not a vulnerability.
+### Fora de escopo
 
-### Out of Scope
+| Categoria | Motivo |
+|---|---|
+| Acesso ao servidor quando você o habilitou | é o comportamento esperado do modo servidor |
+| "Escape de sandbox" | não existe sandbox (ver acima) |
+| Tratamento de dados pelo provider de LLM | governado pela política do provider que você configurou |
+| Comportamento de servidores MCP externos | MCP servers que você configura estão fora da fronteira de confiança |
+| Arquivos de config maliciosos | você controla sua própria config |
 
-| Category                        | Rationale                                                               |
-| ------------------------------- | ----------------------------------------------------------------------- |
-| **Server access when opted-in** | If you enable server mode, API access is expected behavior              |
-| **Sandbox escapes**             | The permission system is not a sandbox (see above)                      |
-| **LLM provider data handling**  | Data sent to your configured LLM provider is governed by their policies |
-| **MCP server behavior**         | External MCP servers you configure are outside our trust boundary       |
-| **Malicious config files**      | Users control their own config; modifying it is not an attack vector    |
+## Reportando uma vulnerabilidade
 
----
+**No HubCli** (instaladores, empacotamento, launcher, `doctor`, perfis,
+servidor MCP do HubCli): use a aba
+[Security Advisory do HubCli](https://github.com/mkvinicius/Hubcli/security/advisories/new).
 
-# Reporting Security Issues
+**No OpenCode** (núcleo do agente, ferramentas, TUI, providers): reporte
+diretamente em
+[OpenCode Security Advisories](https://github.com/anomalyco/opencode/security/advisories/new)
+— o HubCli herda a correção via sync com o upstream.
 
-We appreciate your efforts to responsibly disclose your findings, and will make every effort to acknowledge your contributions.
+Se não tiver certeza de onde o problema está, reporte no HubCli; é fácil
+encaminhar.
 
-To report a security issue, please use the GitHub Security Advisory ["Report a Vulnerability"](https://github.com/anomalyco/opencode/security/advisories/new) tab.
+Este é um projeto mantido por uma pessoa só, no tempo livre — não há SLA de
+resposta. Não abra issue pública para vulnerabilidade.
 
-The team will send a response indicating the next steps in handling your report. After the initial reply to your report, the security team will keep you informed of the progress towards a fix and full announcement, and may ask for additional information or guidance.
+## Segurança da distribuição
 
-## Escalation
-
-If you do not receive an acknowledgement of your report within 6 business days, you may send an email to security@anoma.ly
+Como os binários são construídos, assinados (ou não), verificados por checksum
+e o que isso garante ou não: [docs/SECURITY.md](docs/SECURITY.md).

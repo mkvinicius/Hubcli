@@ -1,19 +1,28 @@
-name: 🚀 Feature Request
-description: Suggest an idea, feature, or enhancement
-title: "[FEATURE]:"
+name: 🚀 Sugerir uma melhoria
+description: Sugerir uma ideia, funcionalidade ou melhoria para o HubCli
+title: "[FEATURE]: "
+labels: ["enhancement"]
 
 body:
-  - type: checkboxes
-    id: verified
+  - type: markdown
     attributes:
-      label: Feature hasn't been suggested before.
-      options:
-        - label: I have verified this feature I'm about to request hasn't been suggested before.
-          required: true
+      value: |
+        HubCli é um fork focado em curadoria de modelos, diagnóstico, perfis de
+        roteamento e MCP. Melhorias no núcleo do agente normalmente fazem mais
+        sentido no projeto original: https://github.com/anomalyco/opencode
 
   - type: textarea
+    id: description
     attributes:
-      label: Describe the enhancement you want to request
-      description: What do you want to change or add? What are the benefits of implementing this? Try to be detailed so we can understand your request better :)
+      label: O que você gostaria
+      description: O que quer mudar ou adicionar, e por quê. Quanto mais concreto, melhor.
     validations:
       required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas que você considerou
+      description: Existe alguma forma de fazer isso hoje? O que falta nela?
+    validations:
+      required: false

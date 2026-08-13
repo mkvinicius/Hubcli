@@ -1,66 +1,85 @@
-name: Bug report
-description: Report an issue that should be fixed (avoid pasting giant AI generated summaries or your issue may be closed/ignored)
+name: Reportar um bug
+description: Algo não funciona como deveria no HubCli
+labels: ["bug"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        HubCli é um fork independente do OpenCode. Se o problema também acontece
+        no OpenCode original, reporte em https://github.com/anomalyco/opencode.
+
   - type: textarea
     id: description
     attributes:
-      label: Description
-      description: Describe the bug you encountered
-      placeholder: What happened?
+      label: O que aconteceu
+      description: Descreva o problema e o que você esperava que acontecesse.
+      placeholder: Ao rodar X, aconteceu Y; eu esperava Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Como reproduzir
+      description: Os comandos exatos que você rodou, na ordem.
+      placeholder: |
+        1. curl -fsSL .../install.sh | bash
+        2. hubcli doctor
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Sistema operacional
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux x64
+        - Linux ARM64
+        - Outro
     validations:
       required: true
 
   - type: input
-    id: plugins
+    id: version
     attributes:
-      label: Plugins
-      description: What plugins are you using?
+      label: Versão do HubCli
+      description: Saída de `hubcli --version`. Se a instalação falhou, escreva "falhou ao instalar".
+      placeholder: hubcli-v0.1.0-rc.8
     validations:
-      required: false
+      required: true
 
-  - type: input
-    id: opencode-version
+  - type: dropdown
+    id: install-method
     attributes:
-      label: OpenCode version
-      description: What version of OpenCode are you using?
+      label: Como você instalou
+      options:
+        - install.sh (macOS/Linux)
+        - install.ps1 (Windows)
+        - script/hubcli/setup.sh (clone do repositório, modo desenvolvedor)
+        - Outro / não consegui instalar
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Saída de `hubcli doctor`
+      description: |
+        Cole a saída completa. Esse comando nunca imprime valores de credenciais,
+        só se elas existem — mas revise antes de colar mesmo assim.
+      render: shell
     validations:
       required: false
 
   - type: textarea
-    id: reproduce
+    id: logs
     attributes:
-      label: Steps to reproduce
-      description: How can we reproduce this issue?
-      placeholder: |
-        1.
-        2.
-        3.
-    validations:
-      required: false
-
-  - type: textarea
-    id: screenshot-or-link
-    attributes:
-      label: Screenshot and/or share link
-      description: Run `/share` to get a share link, or attach a screenshot
-      placeholder: Paste link or drag and drop screenshot here
-    validations:
-      required: false
-
-  - type: input
-    id: os
-    attributes:
-      label: Operating System
-      description: what OS are you using?
-      placeholder: e.g., macOS 26.0.1, Ubuntu 22.04, Windows 11
-    validations:
-      required: false
-
-  - type: input
-    id: terminal
-    attributes:
-      label: Terminal
-      description: what terminal are you using?
-      placeholder: e.g., iTerm2, Ghostty, Alacritty, Windows Terminal
+      label: Mensagem de erro
+      description: A mensagem de erro exata, se houver.
+      render: shell
     validations:
       required: false
