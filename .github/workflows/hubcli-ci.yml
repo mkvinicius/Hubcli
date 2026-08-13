@@ -258,3 +258,159 @@ jobs:
             $secretHits | Write-Output
             throw "Possible secret literal found in package"
           }
+
+  # Runs the actual installers (install.sh / install.ps1) end to end, against
+  # the package built by `build` above. Until this job existed the installers
+  # were only ever *copied* into releases, never executed anywhere — which is
+  # how a Windows install could be shipped broken without CI noticing.
+  #
+  # Uses HUBCLI_INSTALL_SOURCE so the installer reads the freshly built
+  # archive from disk instead of a published GitHub release (there is no
+  # release for an arbitrary CI commit). Every other code path — checksum
+  # verification, extraction, atomic install, smoke test, PATH handling,
+  # --check/--repair/--uninstall, config preservation — is the real one.
+  verify-installer:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: windows-x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: hubcli-ci-package-${{ matrix.target }}
+          path: pkg-source
+
+      - name: generate checksums for the local source dir
+        shell: bash
+        run: bash script/hubcli/release/generate-checksums.sh pkg-source
+
+      - name: install, verify, repair, uninstall (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          HUBCLI_INSTALL_SOURCE: ${{ github.workspace }}/pkg-source
+        run: |
+          set -euo pipefail
+          FAKE_HOME="${RUNNER_TEMP}/installer-home-${{ matrix.target }}"
+          BIN_DIR="${FAKE_HOME}/.local/bin"
+          mkdir -p "$FAKE_HOME"
+
+          echo "::group::fresh install"
+          HOME="$FAKE_HOME" HUBCLI_BIN_DIR="$BIN_DIR" bash install.sh
+          echo "::endgroup::"
+
+          test -x "${BIN_DIR}/hubcli"          || { echo "launcher missing after install"; exit 1; }
+          test -x "${BIN_DIR}/hubcli-runtime"  || { echo "runtime missing after install"; exit 1; }
+          test -x "${BIN_DIR}/hubcli-fast"     || { echo "fast bin missing after install"; exit 1; }
+
+          echo "::group::run the installed binary"
+          HOME="$FAKE_HOME" "${BIN_DIR}/hubcli" --version
+          HOME="$FAKE_HOME" "${BIN_DIR}/hubcli" --help >/dev/null
+          HOME="$FAKE_HOME" "${BIN_DIR}/hubcli" doctor || true
+          echo "::endgroup::"
+
+          # Config/credentials must survive a --repair untouched.
+          echo "DEEPSEEK_API_KEY=must-survive-repair" >> "${FAKE_HOME}/.hubcli/credentials.env"
+          HOME="$FAKE_HOME" HUBCLI_BIN_DIR="$BIN_DIR" bash install.sh --check
+          HOME="$FAKE_HOME" HUBCLI_BIN_DIR="$BIN_DIR" bash install.sh --repair
+          grep -q "must-survive-repair" "${FAKE_HOME}/.hubcli/credentials.env" \
+            || { echo "--repair destroyed user credentials"; exit 1; }
+
+          # A bad checksum must abort without installing anything.
+          echo "::group::checksum mismatch must abort"
+          BAD_SRC="${RUNNER_TEMP}/bad-source-${{ matrix.target }}"
+          BAD_HOME="${RUNNER_TEMP}/bad-home-${{ matrix.target }}"
+          mkdir -p "$BAD_SRC" "$BAD_HOME"
+          cp pkg-source/hubcli-${{ matrix.target }}.tar.gz "$BAD_SRC/"
+          printf '%s  hubcli-%s.tar.gz\n' "$(printf '0%.0s' $(seq 64))" "${{ matrix.target }}" > "$BAD_SRC/checksums-sha256.txt"
+          if HOME="$BAD_HOME" HUBCLI_BIN_DIR="${BAD_HOME}/bin" HUBCLI_INSTALL_SOURCE="$BAD_SRC" bash install.sh; then
+            echo "installer accepted a bad checksum"; exit 1
+          fi
+          test ! -e "${BAD_HOME}/bin/hubcli" || { echo "installer left files behind after checksum failure"; exit 1; }
+          echo "::endgroup::"
+
+          # Uninstall removes binaries but never user data.
+          HOME="$FAKE_HOME" HUBCLI_BIN_DIR="$BIN_DIR" bash install.sh --uninstall
+          test ! -e "${BIN_DIR}/hubcli" || { echo "uninstall left the launcher behind"; exit 1; }
+          grep -q "must-survive-repair" "${FAKE_HOME}/.hubcli/credentials.env" \
+            || { echo "uninstall destroyed user credentials"; exit 1; }
+          echo "installer verified end to end on ${{ matrix.target }}"
+
+      - name: install, verify, repair, uninstall (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          HUBCLI_INSTALL_SOURCE: ${{ github.workspace }}\pkg-source
+        run: |
+          $ErrorActionPreference = "Stop"
+          $fakeHome = Join-Path $env:RUNNER_TEMP "installer-home-windows"
+          $binDir = Join-Path $fakeHome ".hubcli\bin"
+          New-Item -ItemType Directory -Path $fakeHome -Force | Out-Null
+          $env:USERPROFILE = $fakeHome
+
+          Write-Output "::group::fresh install"
+          & .\install.ps1 -InstallDir $binDir -NoPathPrompt
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 exited $LASTEXITCODE" }
+          Write-Output "::endgroup::"
+
+          foreach ($f in @("hubcli.cmd", "hubcli.ps1", "hubcli-runtime.exe", "hubcli-fast.exe")) {
+            if (-not (Test-Path (Join-Path $binDir $f))) { throw "$f missing after install" }
+          }
+
+          Write-Output "::group::run the installed binary"
+          $version = & (Join-Path $binDir "hubcli.cmd") --version
+          if ($LASTEXITCODE -ne 0) { throw "hubcli --version exited $LASTEXITCODE" }
+          if ([string]::IsNullOrWhiteSpace($version)) { throw "hubcli --version printed nothing" }
+          Write-Output "version: $version"
+          & (Join-Path $binDir "hubcli.cmd") --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "hubcli --help exited $LASTEXITCODE" }
+          & (Join-Path $binDir "hubcli.cmd") doctor | Out-Null
+          Write-Output "::endgroup::"
+
+          # Config/credentials must survive a -Repair untouched.
+          $creds = Join-Path $fakeHome ".hubcli\credentials.env"
+          Add-Content -Path $creds -Value "DEEPSEEK_API_KEY=must-survive-repair"
+          & .\install.ps1 -InstallDir $binDir -Check
+          & .\install.ps1 -InstallDir $binDir -Repair -NoPathPrompt
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 -Repair exited $LASTEXITCODE" }
+          if (-not (Select-String -Path $creds -Pattern "must-survive-repair" -Quiet)) {
+            throw "-Repair destroyed user credentials"
+          }
+
+          # A bad checksum must abort without installing anything.
+          Write-Output "::group::checksum mismatch must abort"
+          $badSrc = Join-Path $env:RUNNER_TEMP "bad-source-windows"
+          $badHome = Join-Path $env:RUNNER_TEMP "bad-home-windows"
+          New-Item -ItemType Directory -Path $badSrc, $badHome -Force | Out-Null
+          Copy-Item "pkg-source\hubcli-windows-x64.zip" $badSrc
+          Set-Content -Path (Join-Path $badSrc "checksums-sha256.txt") `
+            -Value ("0" * 64 + "  hubcli-windows-x64.zip")
+          $savedSource = $env:HUBCLI_INSTALL_SOURCE
+          $env:HUBCLI_INSTALL_SOURCE = $badSrc
+          $global:LASTEXITCODE = 0
+          & .\install.ps1 -InstallDir (Join-Path $badHome "bin") -NoPathPrompt
+          if ($LASTEXITCODE -eq 0) { throw "installer accepted a bad checksum" }
+          if (Test-Path (Join-Path $badHome "bin\hubcli.cmd")) {
+            throw "installer left files behind after checksum failure"
+          }
+          $env:HUBCLI_INSTALL_SOURCE = $savedSource
+          $global:LASTEXITCODE = 0
+          Write-Output "::endgroup::"
+
+          # Uninstall removes binaries but never user data.
+          & .\install.ps1 -InstallDir $binDir -Uninstall
+          if (Test-Path (Join-Path $binDir "hubcli.cmd")) { throw "uninstall left the launcher behind" }
+          if (-not (Select-String -Path $creds -Pattern "must-survive-repair" -Quiet)) {
+            throw "uninstall destroyed user credentials"
+          }
+          Write-Output "installer verified end to end on windows-x64"
