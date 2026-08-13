@@ -24,9 +24,9 @@ name: hubcli-ci
 
 on:
   push:
-    branches: [integration/upstream-20260702]
+    branches: [dev]
   pull_request:
-    branches: [integration/upstream-20260702]
+    branches: [dev]
   workflow_dispatch: {}
 
 concurrency:
