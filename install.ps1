@@ -123,8 +123,14 @@ function Invoke-HubCliInstall {
     # so the try/catch and rollback paths actually fire.
     $ErrorActionPreference = "Stop"
 
+    # -InstallDir wins; then HUBCLI_BIN_DIR (same env var install.sh honors, so
+    # both platforms can be scripted the same way); then the default.
     if ([string]::IsNullOrEmpty($InstallDir)) {
-        $InstallDir = Join-Path $env:USERPROFILE ".hubcli\bin"
+        if (-not [string]::IsNullOrEmpty($env:HUBCLI_BIN_DIR)) {
+            $InstallDir = $env:HUBCLI_BIN_DIR
+        } else {
+            $InstallDir = Join-Path $env:USERPROFILE ".hubcli\bin"
+        }
     }
     $HubcliHome = Join-Path $env:USERPROFILE ".hubcli"
     $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -184,6 +190,7 @@ function Invoke-HubCliInstall {
     # -----------------------------------------------------------------------
     if ($DryRun) {
         $displayVersion = if ([string]::IsNullOrEmpty($Version)) { "<latest release>" } else { $Version }
+        Write-Host "HubCli install dry run (no network or file changes)"
         Write-Info "(-DryRun) Version: $displayVersion"
         Write-Info "(-DryRun) Would download $PkgName.zip and verify its SHA-256"
         Write-Info "(-DryRun) Would install $($files -join ', ') into $InstallDir"
