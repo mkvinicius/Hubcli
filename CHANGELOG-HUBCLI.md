@@ -2,6 +2,70 @@
 
 Registro das mudanças do fork sobre o OpenCode. Formato reverso-cronológico.
 
+## v0.1.0-rc.9 (2026-08-13)
+
+Instalação realmente utilizável por outras pessoas. Motivada por um relato real:
+não foi possível instalar num Windows de trabalho.
+
+A causa de fundo não foi um bug só — era que **`install.sh` e `install.ps1` nunca
+eram executados em lugar nenhum**: o CI apenas os copiava como anexo da release.
+O `install.ps1` chegou a ser publicado sem jamais ter rodado.
+
+### Correções — Windows (`install.ps1`)
+
+- **Download parecia travado**: `$ProgressPreference` no padrão faz o Windows
+  PowerShell 5.1 renderizar barra de progresso a cada bloco; num arquivo de ~95 MB
+  isso domina o tempo. Silenciado antes de qualquer chamada de rede.
+- **TLS**: PS 5.1 em Windows antigo/corporativo negocia TLS 1.0/1.1, que o GitHub
+  recusa. Agora força TLS 1.2 (+1.3 quando disponível).
+- **Arquitetura detectada errado**: lia só `PROCESSOR_ARCHITECTURE`; num Windows
+  64-bit rodando PowerShell 32-bit isso reporta `x86`, e o instalador **recusava
+  instalar** em máquina suportada. Agora lê a arquitetura do SO, com mensagem
+  própria para ARM64.
+- **`exit` encerrava a sessão inteira** do usuário quando rodado via `irm | iex`.
+- **`Read-Host` travava** execução não-interativa; agora depende de
+  `UserInteractive` e existe `-NoPathPrompt`.
+- **PATH não valia na sessão atual**, deixando `hubcli` "não encontrado" logo após
+  instalar com sucesso.
+- **`Unblock-File`** nos arquivos extraídos (mark-of-the-web / SmartScreen).
+- **Arquivo passou a ser ASCII puro** — havia um traço longo dentro de string, e o
+  PS 5.1 lê `.ps1` sem BOM na codepage ANSI.
+- Paridade com o `install.sh`: passou a respeitar `HUBCLI_BIN_DIR`.
+
+### Correções — Linux
+
+- **`hubcli` não iniciava no Linux.** Os launchers checavam a permissão do
+  `credentials.env` com `stat -f "%Lp" || stat -c "%a"`. No Linux, `stat -f`
+  significa "status do *filesystem*" e **tem sucesso**, imprimindo dados do disco,
+  então o fallback GNU nunca rodava e a comparação via um blob em vez de `600`.
+  Como o próprio instalador cria o `credentials.env`, qualquer usuário Linux batia
+  em "credentials file has insecure permissions" e o launcher abortava. Corrigido
+  em `setup.sh`, `launcher-template.sh` e `hubcli-dist-launcher.sh`.
+
+### CI
+
+- Novo job **`verify-installer`** (ubuntu/macos/windows) que executa os
+  instaladores de verdade contra o pacote recém-construído: instalação limpa,
+  rodar o binário instalado, `--check`, `--repair` (verificando que credenciais do
+  usuário sobrevivem), checksum inválido (verificando que **nada** é instalado) e
+  `--uninstall` (verificando que dados são preservados). Foi esse job que
+  encontrou o bug do Linux acima.
+- O `hubcli-ci.yml` ainda disparava na branch `integration/upstream-20260702`, já
+  mergeada — ou seja, **nenhum commit desde o merge estava sendo testado**. Agora
+  dispara em `dev`.
+
+### Projeto pronto para terceiros
+
+- `README.md` (o que o GitHub mostra) estava com um stub sem instruções de
+  instalação; todo o conteúdo vivia em `README-HUBCLI.md`, que ninguém vê.
+- Metadados do repositório ainda eram do OpenCode (descrição e link para
+  opencode.ai) e **Issues estava desabilitado**. Corrigidos; Issues aberto.
+- Templates de issue mandavam para o Discord do OpenCode e pediam "OpenCode
+  version"; agora perguntam SO, forma de instalação e saída do `doctor`.
+- `CONTRIBUTING.md` e `SECURITY.md` eram os do OpenCode (time deles, canal de
+  reporte deles); reescritos para o HubCli.
+- As notas de release passam a trazer os comandos de instalação no topo.
+
 ## v0.1.0-rc.8 (2026-08-11)
 
 Cherry-pick de um fix do upstream diretamente relevante à instabilidade do NVIDIA/MiniMax M3 investigada nesta sessão.
